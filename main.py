@@ -1,5 +1,4 @@
-def main():
-    print("Hello from sift-cli!")
+from sift_cli.main import main
 
 
 if __name__ == "__main__":

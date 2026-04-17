@@ -1,7 +1,10 @@
 [project]
 name = "sift-cli"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local offline interactive file search TUI"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+
+[project.scripts]
+sift-cli = "sift_cli.main:main"
