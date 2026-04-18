@@ -91,7 +91,29 @@ def initialize_active_database(db_path: Path) -> None:
         initialize_database(db_path)
 
 
+def reset_staging_database(staging_db_path: Path) -> None:
+    """Recreate the staging database from a clean slate."""
+
+    _remove_database_artifacts(staging_db_path)
+    initialize_database(staging_db_path)
+
+
 def publish_staging_database(active_db_path: Path, staging_db_path: Path) -> None:
     """Replace the active database with a completed staging database."""
 
     os.replace(staging_db_path, active_db_path)
+
+
+def cleanup_database_artifacts(db_path: Path) -> None:
+    """Remove database file and sqlite sidecar artifacts if present."""
+
+    _remove_database_artifacts(db_path)
+
+
+def _remove_database_artifacts(db_path: Path) -> None:
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        target = Path(f"{db_path}{suffix}")
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            continue

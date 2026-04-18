@@ -17,6 +17,7 @@ def build_app_config(
     roots=(),
     ignore_dirs=DEFAULT_IGNORE_DIRS,
     max_extracted_file_size=DEFAULT_MAX_EXTRACTED_FILE_SIZE,
+    include_hidden_dirs=False,
     auto_start_indexing=False,
 ) -> LaunchConfig:
     return LaunchConfig(
@@ -26,6 +27,7 @@ def build_app_config(
         roots=tuple(roots),
         ignore_dirs=tuple(ignore_dirs),
         max_extracted_file_size=max_extracted_file_size,
+        include_hidden_dirs=include_hidden_dirs,
         auto_start_indexing=auto_start_indexing,
     )
 
@@ -48,6 +50,7 @@ def _build_launch_config(runtime_paths: RuntimePaths, config: AppConfig) -> Laun
         roots=config.roots,
         ignore_dirs=config.ignore_dirs,
         max_extracted_file_size=config.max_extracted_file_size,
+        include_hidden_dirs=config.include_hidden_dirs,
         auto_start_indexing=True,
     )
 

@@ -13,6 +13,7 @@ class AppConfig:
     roots: tuple[Path, ...]
     ignore_dirs: tuple[str, ...]
     max_extracted_file_size: int
+    include_hidden_dirs: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -34,11 +34,13 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     roots = raw.get("roots")
     ignore_dirs = raw.get("ignore_dirs")
     max_size = raw.get("max_extracted_file_size")
+    include_hidden_dirs = raw.get("include_hidden_dirs")
 
     return AppConfig(
         roots=_load_roots(roots),
         ignore_dirs=_load_ignore_dirs(ignore_dirs),
         max_extracted_file_size=_load_max_size(max_size),
+        include_hidden_dirs=_load_include_hidden_dirs(include_hidden_dirs),
     )
 
 
@@ -49,6 +51,7 @@ def default_config() -> AppConfig:
         roots=default_index_roots(),
         ignore_dirs=DEFAULT_IGNORE_DIRS,
         max_extracted_file_size=DEFAULT_MAX_EXTRACTED_FILE_SIZE,
+        include_hidden_dirs=False,
     )
 
 
@@ -79,4 +82,12 @@ def _load_max_size(value: object) -> int:
         return DEFAULT_MAX_EXTRACTED_FILE_SIZE
     if not isinstance(value, int) or value < 0:
         raise ValueError("max_extracted_file_size must be a non-negative integer")
+    return value
+
+
+def _load_include_hidden_dirs(value: object) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError("include_hidden_dirs must be a boolean")
     return value

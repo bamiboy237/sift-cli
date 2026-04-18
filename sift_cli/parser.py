@@ -7,6 +7,22 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 
+_MONTHS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ParsedQuery:
     raw: str
@@ -45,6 +61,37 @@ def parse_query(raw_query: str, *, now: datetime | None = None) -> ParsedQuery:
     while i < len(tokens):
         token = tokens[i]
         lowered = token.casefold()
+
+        separated_field = _parse_separated_field_clause(tokens, i)
+        if separated_field is not None:
+            field_name, value, next_index = separated_field
+            if field_name == "filename":
+                filename_terms.append(value)
+            elif field_name == "content":
+                content_terms.append(value)
+            elif field_name == "ext":
+                normalized = value.casefold().lstrip(".")
+                if not normalized:
+                    raise ValueError("invalid ext value")
+                exts.append(normalized)
+            elif field_name == "path":
+                path_terms.append(value)
+            elif field_name == "after":
+                start, _ = _parse_date_value(value, current)
+                after = start if after is None else max(after, start)
+            elif field_name == "before":
+                _, end = _parse_date_value(value, current)
+                before = end if before is None else min(before, end)
+            i = next_index
+            continue
+
+        from_phrase = _parse_from_phrase(tokens, i, current)
+        if from_phrase is not None:
+            start, end, next_index = from_phrase
+            after = start if after is None else max(after, start)
+            before = end if before is None else min(before, end)
+            i = next_index
+            continue
 
         if lowered == "this" and i + 1 < len(tokens) and tokens[i + 1].casefold() == "week":
             phrase_bounds = _parse_date_phrase("this week", current)
@@ -190,6 +237,23 @@ def _parse_field_clause(token: str) -> tuple[str, str] | None:
     return field_name, value
 
 
+def _parse_separated_field_clause(tokens: list[str], index: int) -> tuple[str, str, int] | None:
+    token = tokens[index]
+    lowered = token.casefold()
+    if lowered not in {"filename:", "content:", "ext:", "path:", "after:", "before:"}:
+        return None
+    if index + 1 >= len(tokens):
+        return None
+
+    field_name = lowered[:-1]
+    value = tokens[index + 1]
+    if value.startswith('"') and value.endswith('"') and len(value) >= 2:
+        value = value[1:-1]
+    if not value:
+        return None
+    return field_name, value, index + 2
+
+
 def _parse_date_phrase(token: str, current: datetime) -> tuple[float, float] | None:
     phrase = token.casefold().strip()
     today_start = current.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -206,16 +270,79 @@ def _parse_date_phrase(token: str, current: datetime) -> tuple[float, float] | N
     return None
 
 
+def _parse_from_phrase(tokens: list[str], index: int, current: datetime) -> tuple[float, float, int] | None:
+    if tokens[index].casefold() != "from":
+        return None
+    if index + 1 >= len(tokens):
+        return None
+
+    month = _MONTHS.get(tokens[index + 1].casefold())
+    if month is None:
+        return None
+
+    year: int | None = None
+    next_index = index + 2
+    if index + 2 < len(tokens):
+        year_token = tokens[index + 2]
+        if re.fullmatch(r"\d{4}", year_token):
+            year = int(year_token)
+            next_index = index + 3
+
+    current_utc = current.astimezone(timezone.utc)
+    resolved_year = year if year is not None else _resolve_year_for_month(month=month, current=current_utc)
+    start = datetime(resolved_year, month, 1, tzinfo=timezone.utc)
+    return start.timestamp(), current_utc.timestamp(), next_index
+
+
+def _resolve_year_for_month(*, month: int, current: datetime) -> int:
+    if month > current.month:
+        return current.year - 1
+    return current.year
+
+
 def _parse_date_value(value: str, current: datetime) -> tuple[float, float]:
     phrase_bounds = _parse_date_phrase(value, current)
     if phrase_bounds is not None:
         return phrase_bounds
+
+    month_bounds = _parse_month_or_month_year(value, current)
+    if month_bounds is not None:
+        return month_bounds
+
     match = re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip())
     if not match:
         raise ValueError(f"invalid date value: {value}")
     dt = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     start = dt.timestamp()
     return start, (dt + timedelta(days=1)).timestamp()
+
+
+def _parse_month_or_month_year(value: str, current: datetime) -> tuple[float, float] | None:
+    cleaned = value.strip().casefold()
+    if not cleaned:
+        return None
+
+    parts = cleaned.split()
+    if len(parts) not in {1, 2}:
+        return None
+
+    month = _MONTHS.get(parts[0])
+    if month is None:
+        return None
+
+    if len(parts) == 1:
+        year = _resolve_year_for_month(month=month, current=current.astimezone(timezone.utc))
+    else:
+        if not re.fullmatch(r"\d{4}", parts[1]):
+            return None
+        year = int(parts[1])
+
+    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    if month == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    return start.timestamp(), end.timestamp()
 
 
 def _parse_size_filter(token: str) -> tuple[str, int] | None:

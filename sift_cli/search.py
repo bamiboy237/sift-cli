@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
 from .models import SearchResult
 from .parser import ParsedQuery, is_empty_query, is_filter_only_query, parse_query
+
+
+HIGHLIGHT_START = "\x1f"
+HIGHLIGHT_END = "\x1e"
+RESULT_LIMIT = 50
+FTS_CANDIDATE_LIMIT = 500
 
 
 def search_files(db_path: Path, raw_query: str) -> list[SearchResult]:
@@ -28,7 +35,38 @@ def search_files(db_path: Path, raw_query: str) -> list[SearchResult]:
 
 def _should_fallback_from_fts_error(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).casefold()
-    return "fts5: syntax error" in message or "fts5" in message
+    return "fts5: syntax error" in message or "malformed match expression" in message
+
+
+def _qualified(column: str, *, table_prefix: str) -> str:
+    return f"{table_prefix}{column}" if table_prefix else column
+
+
+def _build_metadata_filter_clauses(parsed: ParsedQuery, *, table_prefix: str) -> tuple[list[str], list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+
+    if parsed.exts:
+        placeholders = ", ".join("?" for _ in parsed.exts)
+        clauses.append(f"{_qualified('ext', table_prefix=table_prefix)} IN ({placeholders})")
+        params.extend(parsed.exts)
+    for term in parsed.path_terms:
+        clauses.append(f"lower({_qualified('path', table_prefix=table_prefix)}) LIKE ?")
+        params.append(f"%{term.casefold()}%")
+    if parsed.after is not None:
+        clauses.append(f"{_qualified('modified_at', table_prefix=table_prefix)} >= ?")
+        params.append(parsed.after)
+    if parsed.before is not None:
+        clauses.append(f"{_qualified('modified_at', table_prefix=table_prefix)} <= ?")
+        params.append(parsed.before)
+    if parsed.size_min is not None:
+        clauses.append(f"{_qualified('size', table_prefix=table_prefix)} >= ?")
+        params.append(parsed.size_min)
+    if parsed.size_max is not None:
+        clauses.append(f"{_qualified('size', table_prefix=table_prefix)} <= ?")
+        params.append(parsed.size_max)
+
+    return clauses, params
 
 
 def _search_metadata_only_from_text_terms(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[SearchResult]:
@@ -36,33 +74,24 @@ def _search_metadata_only_from_text_terms(connection: sqlite3.Connection, parsed
     clauses: list[str] = []
     params: list[object] = []
     for term in terms:
-        clauses.append("(lower(files.filename) LIKE ? OR lower(files.path) LIKE ?)")
+        clauses.append("(lower(files.filename) LIKE ? OR lower(coalesce(files.content, '')) LIKE ?)")
         params.extend((f"%{term.casefold()}%", f"%{term.casefold()}%"))
-    if parsed.exts:
-        placeholders = ", ".join("?" for _ in parsed.exts)
-        clauses.append(f"files.ext IN ({placeholders})")
-        params.extend(parsed.exts)
-    for term in parsed.path_terms:
-        clauses.append("lower(files.path) LIKE ?")
+    for term in parsed.filename_terms:
+        clauses.append("lower(files.filename) LIKE ?")
         params.append(f"%{term.casefold()}%")
-    if parsed.after is not None:
-        clauses.append("files.modified_at >= ?")
-        params.append(parsed.after)
-    if parsed.before is not None:
-        clauses.append("files.modified_at <= ?")
-        params.append(parsed.before)
-    if parsed.size_min is not None:
-        clauses.append("files.size >= ?")
-        params.append(parsed.size_min)
-    if parsed.size_max is not None:
-        clauses.append("files.size <= ?")
-        params.append(parsed.size_max)
+    for term in parsed.content_terms:
+        clauses.append("lower(coalesce(files.content, '')) LIKE ?")
+        params.append(f"%{term.casefold()}%")
+    metadata_clauses, metadata_params = _build_metadata_filter_clauses(parsed, table_prefix="files.")
+    clauses.extend(metadata_clauses)
+    params.extend(metadata_params)
 
     where = " AND ".join(clauses) if clauses else "1=1"
     rows = connection.execute(
-        f"SELECT path, filename, ext, size, modified_at FROM files WHERE {where} ORDER BY modified_at DESC, filename ASC, path ASC LIMIT 50",
+        f"SELECT path, filename, ext, size, modified_at, content FROM files WHERE {where} ORDER BY modified_at DESC, filename ASC, path ASC LIMIT {RESULT_LIMIT}",
         params,
     ).fetchall()
+    search_terms = list(parsed.text_terms) + list(parsed.phrases) + list(parsed.filename_terms) + list(parsed.content_terms)
     return [
         SearchResult(
             path=row["path"],
@@ -70,9 +99,9 @@ def _search_metadata_only_from_text_terms(connection: sqlite3.Connection, parsed
             ext=row["ext"],
             size=row["size"],
             modified_at=row["modified_at"],
-            snippet=None,
-            matched_filename=False,
-            matched_content=False,
+            snippet=_build_snippet(row["content"], search_terms),
+            matched_filename=_matched_filename(row["filename"], search_terms),
+            matched_content=_matched_content(row["content"], search_terms),
             score=None,
         )
         for row in rows
@@ -80,32 +109,11 @@ def _search_metadata_only_from_text_terms(connection: sqlite3.Connection, parsed
 
 
 def _search_metadata_only(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[SearchResult]:
-    clauses: list[str] = []
-    params: list[object] = []
-
-    if parsed.exts:
-        placeholders = ", ".join("?" for _ in parsed.exts)
-        clauses.append(f"ext IN ({placeholders})")
-        params.extend(parsed.exts)
-    for term in parsed.path_terms:
-        clauses.append("lower(path) LIKE ?")
-        params.append(f"%{term.casefold()}%")
-    if parsed.after is not None:
-        clauses.append("modified_at >= ?")
-        params.append(parsed.after)
-    if parsed.before is not None:
-        clauses.append("modified_at <= ?")
-        params.append(parsed.before)
-    if parsed.size_min is not None:
-        clauses.append("size >= ?")
-        params.append(parsed.size_min)
-    if parsed.size_max is not None:
-        clauses.append("size <= ?")
-        params.append(parsed.size_max)
+    clauses, params = _build_metadata_filter_clauses(parsed, table_prefix="")
 
     where = " AND ".join(clauses) if clauses else "1=1"
     rows = connection.execute(
-        f"SELECT path, filename, ext, size, modified_at FROM files WHERE {where} ORDER BY modified_at DESC, filename ASC, path ASC LIMIT 50",
+        f"SELECT path, filename, ext, size, modified_at FROM files WHERE {where} ORDER BY modified_at DESC, filename ASC, path ASC LIMIT {RESULT_LIMIT}",
         params,
     ).fetchall()
     return [
@@ -129,16 +137,18 @@ def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[Se
     if not all_terms:
         return _search_metadata_only(connection, parsed)
 
-    text_terms = list(parsed.text_terms) + list(parsed.phrases)
+    text_terms = list(parsed.text_terms)
+    phrase_terms = list(parsed.phrases)
     filename_terms = list(parsed.filename_terms)
     content_terms = list(parsed.content_terms)
 
     clauses: list[str] = []
     params: list[object] = []
 
-    if text_terms:
+    fts_expression = _build_fts_expression(text_terms, phrase_terms)
+    if fts_expression:
         clauses.append("files_fts MATCH ?")
-        params.append(" ".join(text_terms))
+        params.append(fts_expression)
     if filename_terms:
         for term in filename_terms:
             clauses.append("lower(files.filename) LIKE ?")
@@ -148,25 +158,9 @@ def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[Se
             clauses.append("lower(coalesce(files.content, '')) LIKE ?")
             params.append(f"%{term.casefold()}%")
 
-    if parsed.exts:
-        placeholders = ", ".join("?" for _ in parsed.exts)
-        clauses.append(f"files.ext IN ({placeholders})")
-        params.extend(parsed.exts)
-    for term in parsed.path_terms:
-        clauses.append("lower(files.path) LIKE ?")
-        params.append(f"%{term.casefold()}%")
-    if parsed.after is not None:
-        clauses.append("files.modified_at >= ?")
-        params.append(parsed.after)
-    if parsed.before is not None:
-        clauses.append("files.modified_at <= ?")
-        params.append(parsed.before)
-    if parsed.size_min is not None:
-        clauses.append("files.size >= ?")
-        params.append(parsed.size_min)
-    if parsed.size_max is not None:
-        clauses.append("files.size <= ?")
-        params.append(parsed.size_max)
+    metadata_clauses, metadata_params = _build_metadata_filter_clauses(parsed, table_prefix="files.")
+    clauses.extend(metadata_clauses)
+    params.extend(metadata_params)
 
     if not clauses:
         return _search_metadata_only(connection, parsed)
@@ -184,8 +178,9 @@ def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[Se
         JOIN files_fts ON files_fts.rowid = files.id
         WHERE {' AND '.join(clauses)}
         ORDER BY score ASC, files.modified_at DESC, files.path ASC
+        LIMIT ?
     """
-    rows = connection.execute(sql, params).fetchall()
+    rows = connection.execute(sql, [*params, FTS_CANDIDATE_LIMIT]).fetchall()
     search_terms = list(parsed.text_terms) + list(parsed.phrases) + list(parsed.filename_terms) + list(parsed.content_terms)
     normalized_free_text = _normalized_free_text_query(parsed)
     results = [
@@ -203,7 +198,7 @@ def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[Se
         for row in rows
     ]
     results.sort(key=lambda result: _search_sort_key(result, normalized_free_text))
-    return results[:50]
+    return results[:RESULT_LIMIT]
 
 
 def _matched_filename(filename: str, terms: list[str]) -> bool:
@@ -228,8 +223,37 @@ def _build_snippet(content: str | None, terms: list[str]) -> str | None:
             index = lowered.index(match)
             start = max(0, index - 20)
             end = min(len(content), index + len(match) + 20)
-            return content[start:end]
+            return _highlight_terms(content[start:end], terms)
     return None
+
+
+def _build_fts_expression(text_terms: list[str], phrase_terms: list[str]) -> str | None:
+    clauses: list[str] = []
+    for term in text_terms:
+        normalized = term.strip()
+        if normalized:
+            clauses.append(_fts_quote(normalized))
+    for phrase in phrase_terms:
+        normalized = phrase.strip()
+        if normalized:
+            clauses.append(_fts_quote(normalized))
+    if not clauses:
+        return None
+    return " AND ".join(clauses)
+
+
+def _fts_quote(value: str) -> str:
+    escaped = value.replace('"', '""')
+    return f'"{escaped}"'
+
+
+def _highlight_terms(snippet: str, terms: list[str]) -> str:
+    highlight_terms = sorted({term.strip().strip('"') for term in terms if term.strip().strip('"')}, key=len, reverse=True)
+    highlighted = snippet
+    for term in highlight_terms:
+        pattern = re.compile(re.escape(str(term)), re.IGNORECASE)
+        highlighted = pattern.sub(lambda match: f"{HIGHLIGHT_START}{match.group(0)}{HIGHLIGHT_END}", highlighted)
+    return highlighted
 
 
 def _normalized_free_text_query(parsed: ParsedQuery) -> str:
