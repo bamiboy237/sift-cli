@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Local offline interactive file search TUI"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "textual>=8.2.3",
+]
 
 [project.scripts]
 sift-cli = "sift_cli.main:main"

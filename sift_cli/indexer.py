@@ -33,6 +33,7 @@ def build_index(
     ignore_dirs: tuple[str, ...],
     max_extracted_file_size: int,
     extractor: Extractor | None = None,
+    on_published: Callable[[Path], None] | None = None,
 ) -> IndexStats:
     """Build a staging index and publish it on success."""
 
@@ -41,7 +42,9 @@ def build_index(
 
     extractor_func = extractor or extract_text_content
     stats = IndexStats()
-    rows: list[tuple[str, str, str | None, str | None, int, float | None, float]] = []
+    rows: list[
+        tuple[str, str, str | None, str | None, int, float | None, float, float]
+    ] = []
 
     try:
         for root in roots:
@@ -70,6 +73,8 @@ def build_index(
             connection.commit()
 
         publish_staging_database(active_db_path, staging_db_path)
+        if on_published is not None:
+            on_published(active_db_path)
         return IndexStats(
             files_seen=stats.files_seen,
             files_indexed=len(rows),
@@ -120,7 +125,9 @@ def _build_row(
     path: Path,
     max_extracted_file_size: int,
     extractor: Extractor,
-) -> tuple[tuple[str, str, str | None, str | None, int, float | None, float], bool]:
+) -> tuple[
+    tuple[str, str, str | None, str | None, int, float | None, float, float], bool
+]:
     stat_result = path.stat()
     normalized_path = normalize_path(path)
     filename = path.name
