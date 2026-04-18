@@ -1,4 +1,4 @@
-"""Indexing lifecycle and filesystem traversal."""
+"""Indexing lifecycle."""
 
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .db import cleanup_database_artifacts, publish_staging_database, reset_staging_database
+from .db import (
+    cleanup_database_artifacts,
+    publish_staging_database,
+    reset_staging_database,
+)
 from .extractors import extract_text_content
 from .paths import normalize_path
 
@@ -20,7 +24,7 @@ BATCH_SIZE = 500
 
 @dataclass(frozen=True, slots=True)
 class IndexStats:
-    """Simple indexing counters."""
+    """Index counters."""
 
     files_seen: int = 0
     files_indexed: int = 0
@@ -39,7 +43,7 @@ def build_index(
     extractor: Extractor | None = None,
     on_published: Callable[[Path], None] | None = None,
 ) -> IndexStats:
-    """Build a staging index and publish it on success."""
+    """Build and publish the index."""
 
     active_db_path.parent.mkdir(parents=True, exist_ok=True)
     reset_staging_database(staging_db_path)
@@ -56,7 +60,9 @@ def build_index(
     try:
         with sqlite3.connect(staging_db_path) as connection:
             for root in roots:
-                for file_path in _iter_files(root, ignore_dirs, include_hidden_dirs=include_hidden_dirs):
+                for file_path in _iter_files(
+                    root, ignore_dirs, include_hidden_dirs=include_hidden_dirs
+                ):
                     stats = IndexStats(
                         files_seen=stats.files_seen + 1,
                         files_indexed=stats.files_indexed,
@@ -128,7 +134,7 @@ def build_index(
 
 
 class IndexingService:
-    """Single-job guard around index rebuilds."""
+    """Single-job index guard."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -142,7 +148,9 @@ class IndexingService:
             self._lock.release()
 
 
-def _iter_files(root: Path, ignore_dirs: tuple[str, ...], *, include_hidden_dirs: bool = False):
+def _iter_files(
+    root: Path, ignore_dirs: tuple[str, ...], *, include_hidden_dirs: bool = False
+):
     root_path = Path(root)
     if not root_path.exists():
         return
@@ -152,7 +160,8 @@ def _iter_files(root: Path, ignore_dirs: tuple[str, ...], *, include_hidden_dirs
         dirnames[:] = [
             name
             for name in dirnames
-            if name.casefold() not in ignore_names and (include_hidden_dirs or not name.startswith("."))
+            if name.casefold() not in ignore_names
+            and (include_hidden_dirs or not name.startswith("."))
         ]
         current_dir = Path(dirpath)
         for filename in filenames:

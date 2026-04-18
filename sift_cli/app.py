@@ -1,4 +1,4 @@
-"""Textual app shell for sift-cli."""
+"""Textual app shell."""
 
 from __future__ import annotations
 
@@ -8,13 +8,20 @@ from typing import Literal
 from rich.text import Text
 
 from .indexer import IndexingService
-from .messages import IndexBuildAlreadyRunning, IndexBuildFailed, IndexBuildSucceeded, SearchCompletedWithResults, SearchFailed, SearchQueryFailed
+from .messages import (
+    IndexBuildAlreadyRunning,
+    IndexBuildFailed,
+    IndexBuildSucceeded,
+    SearchCompletedWithResults,
+    SearchFailed,
+    SearchQueryFailed,
+)
 from .search import search_files
 from .ui import (
     LaunchConfig,
     SearchController,
-    build_query_banner_text,
     build_autocomplete_text,
+    build_query_banner_text,
     build_result_row_text,
     build_results_text,
     build_sidebar_text,
@@ -23,14 +30,24 @@ from .ui import (
 )
 
 
-def launch_app(config: LaunchConfig, controller: SearchController | None = None) -> None:
+def launch_app(
+    config: LaunchConfig, controller: SearchController | None = None
+) -> None:
     controller = controller or SearchController(db_path=config.db_path)
     try:
         from textual.app import App, ComposeResult
-        from textual.events import Resize
         from textual.containers import Horizontal, Vertical
+        from textual.events import Resize
         from textual.widget import MountError
-        from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, Static
+        from textual.widgets import (
+            Footer,
+            Header,
+            Input,
+            Label,
+            ListItem,
+            ListView,
+            Static,
+        )
     except ModuleNotFoundError as exc:
         raise RuntimeError("textual is required to run the UI") from exc
 
@@ -260,7 +277,9 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                     yield Static("", id="sidebar")
                     with Vertical(id="main"):
                         yield Static("", id="banner")
-                        yield Input(placeholder="Search files…", id="search", name="search")
+                        yield Input(
+                            placeholder="Search files…", id="search", name="search"
+                        )
                         yield Static("", id="autocomplete", classes="-hidden")
                         with Horizontal(id="results-shell"):
                             yield ListView(id="results")
@@ -316,7 +335,9 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                 self._request_render()
                 return
             controller.start_indexing()
-            self.run_worker(self._run_index_refresh(), name="index-refresh", thread=False)
+            self.run_worker(
+                self._run_index_refresh(), name="index-refresh", thread=False
+            )
             self._request_render()
 
         def action_open_selected(self) -> None:
@@ -345,28 +366,41 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
             self._request_render()
 
         def action_submit(self) -> None:
-            if controller.precedence() == "autocomplete" and controller.state.autocomplete:
+            if (
+                controller.precedence() == "autocomplete"
+                and controller.state.autocomplete
+            ):
                 search_input = self.query_one("#search", Input)
-                value, cursor = controller.accept_autocomplete_with_cursor(search_input.cursor_position)
+                value, cursor = controller.accept_autocomplete_with_cursor(
+                    search_input.cursor_position
+                )
                 self.query_one("#search", Input).value = value
                 self.query_one("#search", Input).cursor_position = cursor
                 self._schedule_search(value, immediate=True)
             elif controller.state.focus_mode == "results":
                 controller.open_selected_result()
             else:
-                self._schedule_search(self.query_one("#search", Input).value, immediate=True)
+                self._schedule_search(
+                    self.query_one("#search", Input).value, immediate=True
+                )
             self._request_render()
 
         def action_dismiss(self) -> None:
             if controller.dismiss_transient():
                 self._request_render()
                 return
-            if controller.state.autocomplete and not controller.state.autocomplete_hidden:
+            if (
+                controller.state.autocomplete
+                and not controller.state.autocomplete_hidden
+            ):
                 controller.dismiss_autocomplete()
             self._request_render()
 
         def action_request_quit(self) -> None:
-            if controller.state.autocomplete and not controller.state.autocomplete_hidden:
+            if (
+                controller.state.autocomplete
+                and not controller.state.autocomplete_hidden
+            ):
                 controller.dismiss_autocomplete()
                 self._request_render()
                 return
@@ -379,7 +413,9 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
             if not controller.state.autocomplete:
                 return
             search_input = self.query_one("#search", Input)
-            value, cursor = controller.accept_autocomplete_with_cursor(search_input.cursor_position)
+            value, cursor = controller.accept_autocomplete_with_cursor(
+                search_input.cursor_position
+            )
             self.query_one("#search", Input).value = value
             self.query_one("#search", Input).cursor_position = cursor
             self._schedule_search(value, immediate=True)
@@ -394,7 +430,9 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                     search.value = controller.state.raw_query
                 autocomplete_widget = self.query_one("#autocomplete", Static)
                 autocomplete_text = build_autocomplete_text(controller.state)
-                autocomplete_widget.update(_styled_text(autocomplete_text) if autocomplete_text else "")
+                autocomplete_widget.update(
+                    _styled_text(autocomplete_text) if autocomplete_text else ""
+                )
                 autocomplete_visible = bool(autocomplete_text)
                 if autocomplete_visible != self._autocomplete_visible:
                     self._last_results_render_key = None
@@ -406,10 +444,16 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                     autocomplete_widget.remove_class("-visible")
                     autocomplete_widget.add_class("-hidden")
                 self.query_one("#sidebar", Static).update(
-                    build_sidebar_text(controller.state, roots=config.roots, has_index=controller.state.has_index)
+                    build_sidebar_text(
+                        controller.state,
+                        roots=config.roots,
+                        has_index=controller.state.has_index,
+                    )
                 )
                 self.query_one("#banner", Static).update(
-                    build_query_banner_text(controller.state, has_index=controller.state.has_index)
+                    build_query_banner_text(
+                        controller.state, has_index=controller.state.has_index
+                    )
                 )
                 self._render_results_list()
                 preview = (
@@ -419,10 +463,18 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                 )
                 self.query_one("#preview", Static).update(_styled_text(preview))
                 self.query_one("#status", Label).update(
-                    build_status_text(controller.state, roots=config.roots, has_index=controller.state.has_index)
+                    build_status_text(
+                        controller.state,
+                        roots=config.roots,
+                        has_index=controller.state.has_index,
+                    )
                 )
                 spinner = self.query_one("#spinner", Label)
-                spinner.update("[*]" if controller.state.indexing or controller.state.loading else "")
+                spinner.update(
+                    "[*]"
+                    if controller.state.indexing or controller.state.loading
+                    else ""
+                )
             except MountError:
                 self._request_render()
 
@@ -457,7 +509,9 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                     results_view.append(
                         ListItem(
                             Static(_styled_text(row_text)),
-                            classes="selected" if index == state.selected_index else None,
+                            classes="selected"
+                            if index == state.selected_index
+                            else None,
                         )
                     )
                 results_view.index = state.selected_index
@@ -500,33 +554,51 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                 return
             self._search_debounce_timer = self.set_timer(
                 self._DEBOUNCE_SECONDS,
-                lambda q=query, request_id=request.request_id: self._start_search_worker(q, request_id),
+                lambda q=query, request_id=request.request_id: (
+                    self._start_search_worker(q, request_id)
+                ),
             )
 
         def _start_search_worker(self, query: str, request_id: int) -> None:
-            self.run_worker(self._run_search(query, request_id), name=f"search:{request_id}", thread=False)
+            self.run_worker(
+                self._run_search(query, request_id),
+                name=f"search:{request_id}",
+                thread=False,
+            )
 
         async def _run_search(self, query: str, request_id: int) -> None:
             db_path = controller.db_path
             if db_path is None:
                 self._apply_search_outcome(
-                    SearchQueryFailed(request_id=request_id, query=query, error="No index database configured.")
+                    SearchQueryFailed(
+                        request_id=request_id,
+                        query=query,
+                        error="No index database configured.",
+                    )
                 )
                 return
 
-            def _execute() -> SearchCompletedWithResults | SearchQueryFailed | SearchFailed:
+            def _execute() -> (
+                SearchCompletedWithResults | SearchQueryFailed | SearchFailed
+            ):
                 try:
                     results = search_files(db_path, query)
                 except ValueError as exc:
-                    return SearchQueryFailed(request_id=request_id, query=query, error=str(exc))
+                    return SearchQueryFailed(
+                        request_id=request_id, query=query, error=str(exc)
+                    )
                 except Exception as exc:
                     return SearchFailed(request_id=request_id, error=str(exc))
-                return SearchCompletedWithResults(request_id=request_id, query=query, results=tuple(results))
+                return SearchCompletedWithResults(
+                    request_id=request_id, query=query, results=tuple(results)
+                )
 
             outcome = await asyncio.to_thread(_execute)
             self._apply_search_outcome(outcome)
 
-        def _apply_search_outcome(self, outcome: SearchCompletedWithResults | SearchQueryFailed | SearchFailed) -> None:
+        def _apply_search_outcome(
+            self, outcome: SearchCompletedWithResults | SearchQueryFailed | SearchFailed
+        ) -> None:
             if not controller.is_active_request(outcome.request_id):
                 return
             if isinstance(outcome, SearchQueryFailed):
@@ -538,7 +610,9 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
             self._request_render()
 
         async def _run_index_refresh(self) -> None:
-            def _refresh() -> IndexBuildSucceeded | IndexBuildFailed | IndexBuildAlreadyRunning:
+            def _refresh() -> (
+                IndexBuildSucceeded | IndexBuildFailed | IndexBuildAlreadyRunning
+            ):
                 try:
                     stats = self._indexing_service.refresh(
                         roots=config.roots,
@@ -561,7 +635,10 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
             outcome = await asyncio.to_thread(_refresh)
             self._apply_index_outcome(outcome)
 
-        def _apply_index_outcome(self, outcome: IndexBuildSucceeded | IndexBuildFailed | IndexBuildAlreadyRunning) -> None:
+        def _apply_index_outcome(
+            self,
+            outcome: IndexBuildSucceeded | IndexBuildFailed | IndexBuildAlreadyRunning,
+        ) -> None:
             if isinstance(outcome, IndexBuildAlreadyRunning):
                 controller.set_indexing_already_running()
                 self._request_render()

@@ -1,4 +1,4 @@
-"""SQLite schema and storage helpers."""
+"""SQLite schema and storage helpers for sift-cli."""
 
 from __future__ import annotations
 
@@ -59,10 +59,14 @@ def resolve_runtime_paths(
     config_path: Path | None = None,
     state_dir: Path | None = None,
 ) -> RuntimePaths:
-    """Resolve and create the config and state locations."""
+    """Resolve config and state locations."""
 
-    resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
-    resolved_state_dir = Path(state_dir) if state_dir is not None else default_state_dir()
+    resolved_config_path = (
+        Path(config_path) if config_path is not None else default_config_path()
+    )
+    resolved_state_dir = (
+        Path(state_dir) if state_dir is not None else default_state_dir()
+    )
 
     resolved_config_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_state_dir.mkdir(parents=True, exist_ok=True)
@@ -76,7 +80,7 @@ def resolve_runtime_paths(
 
 
 def initialize_database(db_path: Path) -> None:
-    """Create the SQLite schema at the given path."""
+    """Create the schema at the given path."""
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as connection:
@@ -85,27 +89,27 @@ def initialize_database(db_path: Path) -> None:
 
 
 def initialize_active_database(db_path: Path) -> None:
-    """Create the active database if it does not exist yet."""
+    """Create the active database if missing."""
 
     if not db_path.exists():
         initialize_database(db_path)
 
 
 def reset_staging_database(staging_db_path: Path) -> None:
-    """Recreate the staging database from a clean slate."""
+    """Reset the staging database."""
 
     _remove_database_artifacts(staging_db_path)
     initialize_database(staging_db_path)
 
 
 def publish_staging_database(active_db_path: Path, staging_db_path: Path) -> None:
-    """Replace the active database with a completed staging database."""
+    """Publish the staging database."""
 
     os.replace(staging_db_path, active_db_path)
 
 
 def cleanup_database_artifacts(db_path: Path) -> None:
-    """Remove database file and sqlite sidecar artifacts if present."""
+    """Remove database files and sidecars."""
 
     _remove_database_artifacts(db_path)
 

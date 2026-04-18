@@ -1,4 +1,4 @@
-"""Configuration loading for phase 1."""
+"""Configuration loading for sift-cli."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ DEFAULT_MAX_EXTRACTED_FILE_SIZE = 1_048_576
 
 
 def load_config(config_path: Path | None = None) -> AppConfig:
-    """Load config from TOML, falling back to spec defaults."""
+    """Load config from TOML or defaults."""
 
     path = config_path if config_path is not None else default_config_path()
     if not path.exists():
@@ -45,7 +45,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
 
 
 def default_config() -> AppConfig:
-    """Return the spec defaults."""
+    """Return the default config."""
 
     return AppConfig(
         roots=default_index_roots(),

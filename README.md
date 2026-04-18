@@ -1,61 +1,61 @@
 # sift-cli
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│ sift-cli                                                 │
-│ local, offline, keyboard-first file search               │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ sift-cli                                     │
+│ local, offline, keyboard-first file search   │
+└──────────────────────────────────────────────┘
+```
 
-sift-cli indexes user-selected local folders into SQLite, then lets you search them from a
+` s i f t - c l i` indexes user-selected local folders into SQLite, then searches them in a
 persistent terminal UI.
 
-## How it works
+## Flow
 
-1. You choose the allowed root folders in `~/.config/sift/config.toml`.
-2. You also list ignore paths there for directories you do not want indexed.
-3. sift-cli walks only those allowed roots, skipping ignored directories.
-4. File metadata and extracted text content are stored in SQLite.
-5. Search queries hit the last completed index, so the UI stays responsive.
-6. A background rebuild can run without blocking searches.
+1. Choose allowed root folders in `~/.config/sift/config.toml`.
+2. Add ignored directories in the same file under `ignore_dirs`.
+3. The indexer walks only allowed roots and skips ignored paths.
+4. File metadata and extracted text content land in SQLite.
+5. Search reads the last completed index, so the UI stays responsive.
+6. Rebuilds run in the background without blocking search.
 7. Results are ranked, filtered, previewed, and opened from the terminal.
 
-## Search model
+## Search
 
-- filename search
-- content search
-- combined search
+- filename
+- content
+- both
 - filters:
   - `ext:md`
   - `path:notes`
   - `after:2024-01-01`
   - `before:2024-02-01`
   - size comparisons
-- autocomplete for likely filenames and paths
+- autocomplete for filenames and paths
 
-## Configuration
+## Config
 
-- set allowed roots in `~/.config/sift/config.toml`
-- set ignored directories in the same file under `ignore_dirs`
+- defaults live in `~/.config/sift/config.toml`
+- `roots` sets the allowed index scope
+- `ignore_dirs` excludes traversal targets
 - if no config exists, sift-cli falls back to common home folders
-- indexing stays scoped to the allowed roots only
-- ignored paths are skipped during traversal
-- default ignores include `.git`, `node_modules`, `dist`, `build`, `__pycache__`, `.cache`, `.npm`, and `.uv`
+- default ignores: `.git`, `node_modules`, `dist`, `build`, `__pycache__`, `.cache`, `.npm`, `.uv`
 
-## UI model
+## UI
 
-- Textual-based TUI
-- keyboard-driven navigation
+- Textual TUI
+- keyboard-first navigation
 - live query updates
 - result previews
 - index status and refresh controls
 
 ## Storage
 
-- SQLite for all data
+- SQLite for persistence
 - FTS5 for text search
-- staged rebuilds to keep the active index stable
+- staged rebuilds keep the active index stable
 
-## Key bindings
+## Keys
 
 - `/` focus search
 - `↑` / `↓` move selection
@@ -72,7 +72,7 @@ uv sync
 uv run sift-cli
 ```
 
-## Notes
+## Constraints
 
 - local only
 - offline only

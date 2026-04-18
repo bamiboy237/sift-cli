@@ -1,4 +1,4 @@
-"""SQLite query execution for sift-cli search."""
+"""Search query execution."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 
 from .models import SearchResult
 from .parser import ParsedQuery, is_empty_query, is_filter_only_query, parse_query
-
 
 HIGHLIGHT_START = "\x1f"
 HIGHLIGHT_END = "\x1e"
@@ -42,13 +41,17 @@ def _qualified(column: str, *, table_prefix: str) -> str:
     return f"{table_prefix}{column}" if table_prefix else column
 
 
-def _build_metadata_filter_clauses(parsed: ParsedQuery, *, table_prefix: str) -> tuple[list[str], list[object]]:
+def _build_metadata_filter_clauses(
+    parsed: ParsedQuery, *, table_prefix: str
+) -> tuple[list[str], list[object]]:
     clauses: list[str] = []
     params: list[object] = []
 
     if parsed.exts:
         placeholders = ", ".join("?" for _ in parsed.exts)
-        clauses.append(f"{_qualified('ext', table_prefix=table_prefix)} IN ({placeholders})")
+        clauses.append(
+            f"{_qualified('ext', table_prefix=table_prefix)} IN ({placeholders})"
+        )
         params.extend(parsed.exts)
     for term in parsed.path_terms:
         clauses.append(f"lower({_qualified('path', table_prefix=table_prefix)}) LIKE ?")
@@ -69,12 +72,16 @@ def _build_metadata_filter_clauses(parsed: ParsedQuery, *, table_prefix: str) ->
     return clauses, params
 
 
-def _search_metadata_only_from_text_terms(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[SearchResult]:
+def _search_metadata_only_from_text_terms(
+    connection: sqlite3.Connection, parsed: ParsedQuery
+) -> list[SearchResult]:
     terms = list(parsed.text_terms) + list(parsed.phrases)
     clauses: list[str] = []
     params: list[object] = []
     for term in terms:
-        clauses.append("(lower(files.filename) LIKE ? OR lower(coalesce(files.content, '')) LIKE ?)")
+        clauses.append(
+            "(lower(files.filename) LIKE ? OR lower(coalesce(files.content, '')) LIKE ?)"
+        )
         params.extend((f"%{term.casefold()}%", f"%{term.casefold()}%"))
     for term in parsed.filename_terms:
         clauses.append("lower(files.filename) LIKE ?")
@@ -82,7 +89,9 @@ def _search_metadata_only_from_text_terms(connection: sqlite3.Connection, parsed
     for term in parsed.content_terms:
         clauses.append("lower(coalesce(files.content, '')) LIKE ?")
         params.append(f"%{term.casefold()}%")
-    metadata_clauses, metadata_params = _build_metadata_filter_clauses(parsed, table_prefix="files.")
+    metadata_clauses, metadata_params = _build_metadata_filter_clauses(
+        parsed, table_prefix="files."
+    )
     clauses.extend(metadata_clauses)
     params.extend(metadata_params)
 
@@ -91,7 +100,12 @@ def _search_metadata_only_from_text_terms(connection: sqlite3.Connection, parsed
         f"SELECT path, filename, ext, size, modified_at, content FROM files WHERE {where} ORDER BY modified_at DESC, filename ASC, path ASC LIMIT {RESULT_LIMIT}",
         params,
     ).fetchall()
-    search_terms = list(parsed.text_terms) + list(parsed.phrases) + list(parsed.filename_terms) + list(parsed.content_terms)
+    search_terms = (
+        list(parsed.text_terms)
+        + list(parsed.phrases)
+        + list(parsed.filename_terms)
+        + list(parsed.content_terms)
+    )
     return [
         SearchResult(
             path=row["path"],
@@ -108,7 +122,9 @@ def _search_metadata_only_from_text_terms(connection: sqlite3.Connection, parsed
     ]
 
 
-def _search_metadata_only(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[SearchResult]:
+def _search_metadata_only(
+    connection: sqlite3.Connection, parsed: ParsedQuery
+) -> list[SearchResult]:
     clauses, params = _build_metadata_filter_clauses(parsed, table_prefix="")
 
     where = " AND ".join(clauses) if clauses else "1=1"
@@ -132,8 +148,15 @@ def _search_metadata_only(connection: sqlite3.Connection, parsed: ParsedQuery) -
     ]
 
 
-def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[SearchResult]:
-    all_terms = list(parsed.text_terms) + list(parsed.phrases) + list(parsed.filename_terms) + list(parsed.content_terms)
+def _search_text(
+    connection: sqlite3.Connection, parsed: ParsedQuery
+) -> list[SearchResult]:
+    all_terms = (
+        list(parsed.text_terms)
+        + list(parsed.phrases)
+        + list(parsed.filename_terms)
+        + list(parsed.content_terms)
+    )
     if not all_terms:
         return _search_metadata_only(connection, parsed)
 
@@ -158,7 +181,9 @@ def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[Se
             clauses.append("lower(coalesce(files.content, '')) LIKE ?")
             params.append(f"%{term.casefold()}%")
 
-    metadata_clauses, metadata_params = _build_metadata_filter_clauses(parsed, table_prefix="files.")
+    metadata_clauses, metadata_params = _build_metadata_filter_clauses(
+        parsed, table_prefix="files."
+    )
     clauses.extend(metadata_clauses)
     params.extend(metadata_params)
 
@@ -176,12 +201,17 @@ def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[Se
             COALESCE(bm25(files_fts, 8.0, 1.0), 999999.0) AS score
         FROM files
         JOIN files_fts ON files_fts.rowid = files.id
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY score ASC, files.modified_at DESC, files.path ASC
         LIMIT ?
     """
     rows = connection.execute(sql, [*params, FTS_CANDIDATE_LIMIT]).fetchall()
-    search_terms = list(parsed.text_terms) + list(parsed.phrases) + list(parsed.filename_terms) + list(parsed.content_terms)
+    search_terms = (
+        list(parsed.text_terms)
+        + list(parsed.phrases)
+        + list(parsed.filename_terms)
+        + list(parsed.content_terms)
+    )
     normalized_free_text = _normalized_free_text_query(parsed)
     results = [
         SearchResult(
@@ -248,16 +278,26 @@ def _fts_quote(value: str) -> str:
 
 
 def _highlight_terms(snippet: str, terms: list[str]) -> str:
-    highlight_terms = sorted({term.strip().strip('"') for term in terms if term.strip().strip('"')}, key=len, reverse=True)
+    highlight_terms = sorted(
+        {term.strip().strip('"') for term in terms if term.strip().strip('"')},
+        key=len,
+        reverse=True,
+    )
     highlighted = snippet
     for term in highlight_terms:
         pattern = re.compile(re.escape(str(term)), re.IGNORECASE)
-        highlighted = pattern.sub(lambda match: f"{HIGHLIGHT_START}{match.group(0)}{HIGHLIGHT_END}", highlighted)
+        highlighted = pattern.sub(
+            lambda match: f"{HIGHLIGHT_START}{match.group(0)}{HIGHLIGHT_END}",
+            highlighted,
+        )
     return highlighted
 
 
 def _normalized_free_text_query(parsed: ParsedQuery) -> str:
-    terms = [term.strip().casefold() for term in list(parsed.text_terms) + list(parsed.phrases)]
+    terms = [
+        term.strip().casefold()
+        for term in list(parsed.text_terms) + list(parsed.phrases)
+    ]
     terms = [term for term in terms if term]
     return " ".join(terms)
 
@@ -279,7 +319,9 @@ def _both_fields_boost_rank(result: SearchResult) -> int:
     return 0 if result.matched_filename and result.matched_content else 1
 
 
-def _search_sort_key(result: SearchResult, normalized_free_text: str) -> tuple[float, int, int, float, int, str]:
+def _search_sort_key(
+    result: SearchResult, normalized_free_text: str
+) -> tuple[float, int, int, float, int, str]:
     score = result.score if result.score is not None else 999999.0
     filename_boost = _filename_boost_rank(result.filename, normalized_free_text)
     both_fields_boost = _both_fields_boost_rank(result)
