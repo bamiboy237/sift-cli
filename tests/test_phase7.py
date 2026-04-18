@@ -180,6 +180,14 @@ class ScreenTextTests(unittest.TestCase):
         self.assertIn("index ready", text)
         self.assertIn("results for alpha", text)
 
+    def test_banner_text_for_first_build_state_mentions_background_build(self) -> None:
+        state = SearchState(indexing=True, has_index=False)
+
+        text = build_query_banner_text(state, has_index=False)
+
+        self.assertIn("no completed index", text)
+        self.assertIn("first index", text)
+
     def test_result_row_text_shows_selection_and_match_flags(self) -> None:
         result = _result("/tmp/alpha.md", "alpha.md", snippet="alpha beta")
 
@@ -188,6 +196,13 @@ class ScreenTextTests(unittest.TestCase):
         self.assertIn("> [1/1] alpha.md", text)
         self.assertIn("name", text)
         self.assertIn("content", text)
+
+    def test_results_text_for_first_build_state_explains_wait_for_initial_index(self) -> None:
+        state = SearchState(indexing=True, has_index=False)
+
+        text = build_results_text(state, roots=(Path("/projects"),), has_index=False)
+
+        self.assertIn("Building the first index", text)
 
 
 if __name__ == "__main__":

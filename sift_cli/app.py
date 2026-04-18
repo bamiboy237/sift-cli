@@ -186,6 +186,8 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
             self.query_one("#search", Input).focus()
             self._ui_ready = True
             self._request_render()
+            if config.auto_start_indexing:
+                self.call_after_refresh(self.action_refresh_index)
 
         def _request_render(self) -> None:
             if not self._ui_ready or self._render_pending:
@@ -240,8 +242,10 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
 
         def action_submit(self) -> None:
             if controller.precedence() == "autocomplete" and controller.state.autocomplete:
-                value = controller.accept_autocomplete()
+                search_input = self.query_one("#search", Input)
+                value, cursor = controller.accept_autocomplete_with_cursor(search_input.cursor_position)
                 self.query_one("#search", Input).value = value
+                self.query_one("#search", Input).cursor_position = cursor
                 self._schedule_search(value, immediate=True)
             elif controller.state.focus_mode == "results":
                 controller.open_selected_result()
@@ -352,8 +356,10 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                 event.stop()
             elif event.key == "tab":
                 if controller.state.autocomplete:
-                    value = controller.accept_autocomplete()
+                    search_input = self.query_one("#search", Input)
+                    value, cursor = controller.accept_autocomplete_with_cursor(search_input.cursor_position)
                     self.query_one("#search", Input).value = value
+                    self.query_one("#search", Input).cursor_position = cursor
                     self._schedule_search(value, immediate=True)
                     self._request_render()
                     event.stop()
@@ -374,7 +380,8 @@ def launch_app(config: LaunchConfig, controller: SearchController | None = None)
                 event.stop()
 
         def _schedule_search(self, query: str, *, immediate: bool) -> None:
-            controller.update_query(query)
+            cursor = self.query_one("#search", Input).cursor_position
+            controller.update_query(query, cursor=cursor)
             if not query.strip():
                 controller.invalidate_pending_searches()
                 controller.clear_results()

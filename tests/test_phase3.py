@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sift_cli.db import initialize_database
+from sift_cli.models import SearchResult
 from sift_cli.parser import is_empty_query, is_filter_only_query, parse_query
-from sift_cli.search import search_files
+from sift_cli.search import _filename_boost_rank, _search_sort_key, search_files
 
 
 def seed_file(db_path: Path, *, path: str, filename: str, ext: str | None, content: str | None, size: int, modified_at: float) -> None:
@@ -129,6 +130,120 @@ class SearchTests(unittest.TestCase):
 
         self.assertEqual([result.filename for result in results], ["a.md"])
         self.assertTrue(all(result.score is None for result in results))
+
+    def test_text_search_tie_breaks_on_newer_modified_time_then_shorter_filename_then_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "index.db"
+            initialize_database(db_path)
+            seed_file(
+                db_path,
+                path="/docs/newer/same.md",
+                filename="same.md",
+                ext="md",
+                content="alpha",
+                size=10,
+                modified_at=20.0,
+            )
+            seed_file(
+                db_path,
+                path="/docs/older/aa.md",
+                filename="aa.md",
+                ext="md",
+                content="alpha",
+                size=10,
+                modified_at=10.0,
+            )
+            seed_file(
+                db_path,
+                path="/z/same.md",
+                filename="same.md",
+                ext="md",
+                content="alpha",
+                size=10,
+                modified_at=10.0,
+            )
+            seed_file(
+                db_path,
+                path="/a/same.md",
+                filename="same.md",
+                ext="md",
+                content="alpha",
+                size=10,
+                modified_at=10.0,
+            )
+
+            results = search_files(db_path, "content:alpha")
+
+        self.assertEqual([result.filename for result in results[:3]], ["same.md", "aa.md", "same.md"])
+        self.assertEqual(results[0].path, "/docs/newer/same.md")
+        same_paths = [result.path for result in results if result.filename == "same.md"]
+        self.assertEqual(same_paths[1:], ["/a/same.md", "/z/same.md"])
+
+    def test_text_search_prefers_exact_and_prefix_filename_matches(self) -> None:
+        self.assertEqual(_filename_boost_rank("alpha", "alpha"), 0)
+        self.assertEqual(_filename_boost_rank("alphabet", "alpha"), 1)
+        self.assertEqual(_filename_boost_rank("notes-alpha", "alpha"), 2)
+        self.assertEqual(_filename_boost_rank("notes", "alpha"), 3)
+
+    def test_text_search_prefers_both_filename_and_content_matches_when_other_factors_tie(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "index.db"
+            initialize_database(db_path)
+            seed_file(db_path, path="/docs/alpha-a.md", filename="alpha-a.md", ext="md", content="alpha", size=10, modified_at=1.0)
+            seed_file(db_path, path="/docs/alpha-b.md", filename="alpha-b.md", ext="md", content="zzz", size=10, modified_at=1.0)
+
+            results = search_files(db_path, "alpha")
+
+        order = [result.filename for result in results]
+        self.assertLess(order.index("alpha-a.md"), order.index("alpha-b.md"))
+
+    def test_text_search_order_is_deterministic_on_unchanged_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "index.db"
+            initialize_database(db_path)
+            seed_file(db_path, path="/docs/alpha.md", filename="alpha.md", ext="md", content="alpha beta", size=10, modified_at=3.0)
+            seed_file(db_path, path="/docs/beta.md", filename="beta.md", ext="md", content="alpha", size=10, modified_at=2.0)
+            seed_file(db_path, path="/docs/gamma.md", filename="gamma.md", ext="md", content="alpha alpha", size=10, modified_at=1.0)
+
+            first = [result.path for result in search_files(db_path, "alpha")]
+            for _ in range(5):
+                self.assertEqual([result.path for result in search_files(db_path, "alpha")], first)
+
+    def test_search_sort_key_orders_by_spec_priority_chain(self) -> None:
+        base = dict(ext="md", size=10, modified_at=10.0, snippet="alpha", score=1.0)
+        result_a = _search_result(path="/z/alpha.md", filename="alpha.md", matched_filename=True, matched_content=True, **base)
+        result_b = _search_result(path="/a/alphabet.md", filename="alphabet.md", matched_filename=True, matched_content=True, **base)
+        result_c = _search_result(path="/a/notes-alpha.md", filename="notes-alpha.md", matched_filename=True, matched_content=False, **base)
+        result_d = _search_result(path="/a/notes.md", filename="notes.md", matched_filename=False, matched_content=True, **base)
+
+        ordered = sorted([result_d, result_c, result_b, result_a], key=lambda result: _search_sort_key(result, "alpha"))
+
+        self.assertEqual([result.filename for result in ordered], ["alpha.md", "alphabet.md", "notes-alpha.md", "notes.md"])
+
+
+def _search_result(
+    *,
+    path: str,
+    filename: str,
+    ext: str | None,
+    size: int,
+    modified_at: float,
+    snippet: str | None,
+    matched_filename: bool,
+    matched_content: bool,
+    score: float | None,
+) -> SearchResult:
+    return SearchResult(
+        path=path,
+        filename=filename,
+        ext=ext,
+        size=size,
+        modified_at=modified_at,
+        snippet=snippet,
+        matched_filename=matched_filename,
+        matched_content=matched_content,
+        score=score,
+    )
 
 
 if __name__ == "__main__":

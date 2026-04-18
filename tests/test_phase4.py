@@ -4,7 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sift_cli.autocomplete import autocomplete_suggestions, replace_active_token
+from sift_cli.autocomplete import (
+    autocomplete_suggestions,
+    replace_active_token,
+    replace_active_token_with_cursor,
+)
 from sift_cli.fuzzy_index import FuzzyIndex, build_trigram_index, extract_trigrams
 from sift_cli.indexer import build_index
 
@@ -62,6 +66,22 @@ class AutocompleteTests(unittest.TestCase):
         self.assertEqual(free_text[0].insert_text, "alpha.md")
         self.assertGreaterEqual(len(path_field), 1)
         self.assertEqual(path_field[0].insert_text, "/root/alpha.md")
+
+    def test_replace_active_token_with_cursor_returns_updated_cursor(self) -> None:
+        query, cursor = replace_active_token_with_cursor(
+            "alpha path:do ext:md",
+            "/docs/readme.md",
+            cursor=13,
+        )
+
+        self.assertEqual(query, "alpha path:/docs/readme.md ext:md")
+        self.assertEqual(cursor, len("alpha path:/docs/readme.md"))
+
+    def test_replace_active_token_with_cursor_keeps_cursor_when_no_active_token(self) -> None:
+        query, cursor = replace_active_token_with_cursor("alpha ", "beta", cursor=6)
+
+        self.assertEqual(query, "alpha ")
+        self.assertEqual(cursor, 6)
 
 
 class RebuildTests(unittest.TestCase):

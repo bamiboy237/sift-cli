@@ -31,14 +31,30 @@ def autocomplete_suggestions(
 
 
 def replace_active_token(query: str, replacement: str, cursor: int | None = None) -> str:
+    updated, _ = replace_active_token_with_cursor(query, replacement, cursor=cursor)
+    return updated
+
+
+def replace_active_token_with_cursor(
+    query: str,
+    replacement: str,
+    cursor: int | None = None,
+) -> tuple[str, int]:
     token = _active_token(query, cursor=cursor)
     if token is None:
-        return query
-    field, value = token
+        current_cursor = len(query) if cursor is None else max(0, min(cursor, len(query)))
+        return query, current_cursor
+
+    field, _ = token
     start, end = _token_bounds(query, cursor=cursor)
     if field is None:
-        return f"{query[:start]}{replacement}{query[end:]}"
-    return f"{query[:start]}{field}:{replacement}{query[end:]}"
+        updated = f"{query[:start]}{replacement}{query[end:]}"
+        next_cursor = start + len(replacement)
+        return updated, next_cursor
+
+    updated = f"{query[:start]}{field}:{replacement}{query[end:]}"
+    next_cursor = start + len(field) + 1 + len(replacement)
+    return updated, next_cursor
 
 
 def _active_token(query: str, cursor: int | None = None) -> tuple[str | None, str] | None:

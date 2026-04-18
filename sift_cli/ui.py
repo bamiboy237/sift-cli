@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import cast
 
 from .autocomplete import AutocompleteSuggestion, autocomplete_suggestions
-from .autocomplete import replace_active_token
+from .autocomplete import replace_active_token_with_cursor
 from .actions import open_file
 from .fuzzy_index import FuzzyIndex, load_fuzzy_index
 from .models import ResultViewModel, SearchPreview, SearchResult
@@ -47,6 +47,7 @@ class LaunchConfig:
     roots: tuple[Path, ...]
     ignore_dirs: tuple[str, ...] = ()
     max_extracted_file_size: int = 1_048_576
+    auto_start_indexing: bool = False
 
 
 def build_preview_text(*, snippet: str | None, path: str) -> str:
@@ -66,8 +67,11 @@ def render_result_preview(result: SearchResult) -> str:
 
 
 def build_query_banner_text(state: SearchState, *, has_index: bool = False) -> str:
+    index_ready = has_index or state.has_index
     if state.status_message:
         summary = state.status_message
+    elif state.indexing and not index_ready:
+        summary = "Building the first index in the background."
     elif state.loading:
         summary = "Searching against the active index..."
     elif state.indexing:
@@ -79,7 +83,7 @@ def build_query_banner_text(state: SearchState, *, has_index: bool = False) -> s
     else:
         summary = f"No matches for {state.raw_query}"
 
-    index_state = "index ready" if has_index or state.has_index else "no completed index"
+    index_state = "index ready" if index_ready else "no completed index"
     mode = state.mode.replace("-", " ")
     return f"Query: {state.raw_query or '—'}\nMode: {mode}  •  {index_state}  •  {summary}"
 
@@ -163,13 +167,21 @@ def build_results_text(
     roots: tuple[Path, ...] = (),
     has_index: bool = False,
 ) -> str:
+    index_ready = has_index or state.has_index
+
+    if state.indexing and not index_ready:
+        return "Building the first index... results will appear after the first successful build."
+
+    if state.indexing and index_ready and not state.raw_query.strip() and not state.results:
+        return "Indexing... search remains available against the last completed index."
+
     if state.loading:
-        if has_index or state.has_index:
+        if index_ready:
             return "Indexing... search remains available against the last completed index."
         return "Building the first index... results will appear after the first successful build."
 
     if not state.raw_query.strip():
-        if not has_index and not state.has_index:
+        if not index_ready:
             roots_text = "\n".join(f"- {root}" for root in roots) or "- (no roots configured)"
             return (
                 "No completed index exists yet.\n"
@@ -268,14 +280,13 @@ class SearchController:
             self.state,
             results=typed_results,
             loading=False,
-            indexing=False,
             mode=mode,
             selected_index=selected_index,
             status_message="",
         )
 
-    def update_query(self, query: str) -> None:
-        autocomplete = tuple(autocomplete_suggestions(query, self._fuzzy_index)) if query.strip() else ()
+    def update_query(self, query: str, *, cursor: int | None = None) -> None:
+        autocomplete = tuple(autocomplete_suggestions(query, self._fuzzy_index, cursor=cursor)) if query.strip() else ()
         mode = "empty" if not query.strip() else ("autocomplete" if autocomplete else "ready")
         help_text = _help_text_for_query(query)
         self.state = replace(
@@ -355,12 +366,20 @@ class SearchController:
         self.state = replace(self.state, autocomplete_index=next_index, focus_mode="autocomplete")
 
     def accept_autocomplete(self) -> str:
+        return self.accept_autocomplete_with_cursor()[0]
+
+    def accept_autocomplete_with_cursor(self, cursor: int | None = None) -> tuple[str, int]:
         if not self.state.autocomplete:
-            return self.state.raw_query
+            current_cursor = len(self.state.raw_query) if cursor is None else max(0, min(cursor, len(self.state.raw_query)))
+            return self.state.raw_query, current_cursor
         suggestion = self.state.autocomplete[self.state.autocomplete_index]
-        query = replace_active_token(self.state.raw_query, suggestion.insert_text)
+        query, next_cursor = replace_active_token_with_cursor(
+            self.state.raw_query,
+            suggestion.insert_text,
+            cursor=cursor,
+        )
         self.update_query(query)
-        return query
+        return query, next_cursor
 
     def clear_results(self) -> None:
         self.state = replace(self.state, results=(), selected_index=0)

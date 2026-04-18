@@ -183,11 +183,11 @@ def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[Se
         FROM files
         JOIN files_fts ON files_fts.rowid = files.id
         WHERE {' AND '.join(clauses)}
-        ORDER BY files.modified_at DESC, files.path ASC
-        LIMIT 50
+        ORDER BY score ASC, files.modified_at DESC, files.path ASC
     """
     rows = connection.execute(sql, params).fetchall()
     search_terms = list(parsed.text_terms) + list(parsed.phrases) + list(parsed.filename_terms) + list(parsed.content_terms)
+    normalized_free_text = _normalized_free_text_query(parsed)
     results = [
         SearchResult(
             path=row["path"],
@@ -202,8 +202,8 @@ def _search_text(connection: sqlite3.Connection, parsed: ParsedQuery) -> list[Se
         )
         for row in rows
     ]
-    results.sort(key=_search_sort_key)
-    return results
+    results.sort(key=lambda result: _search_sort_key(result, normalized_free_text))
+    return results[:50]
 
 
 def _matched_filename(filename: str, terms: list[str]) -> bool:
@@ -232,8 +232,38 @@ def _build_snippet(content: str | None, terms: list[str]) -> str | None:
     return None
 
 
-def _search_sort_key(result: SearchResult) -> tuple[float, int, int, float, str]:
-    filename_boost = 0 if result.matched_filename else 1
-    content_boost = 0 if result.matched_content else 1
+def _normalized_free_text_query(parsed: ParsedQuery) -> str:
+    terms = [term.strip().casefold() for term in list(parsed.text_terms) + list(parsed.phrases)]
+    terms = [term for term in terms if term]
+    return " ".join(terms)
+
+
+def _filename_boost_rank(filename: str, normalized_query: str) -> int:
+    if not normalized_query:
+        return 3
+    lowered = filename.casefold()
+    if lowered == normalized_query:
+        return 0
+    if lowered.startswith(normalized_query):
+        return 1
+    if normalized_query in lowered:
+        return 2
+    return 3
+
+
+def _both_fields_boost_rank(result: SearchResult) -> int:
+    return 0 if result.matched_filename and result.matched_content else 1
+
+
+def _search_sort_key(result: SearchResult, normalized_free_text: str) -> tuple[float, int, int, float, int, str]:
     score = result.score if result.score is not None else 999999.0
-    return (filename_boost, content_boost, len(result.filename), score, result.path)
+    filename_boost = _filename_boost_rank(result.filename, normalized_free_text)
+    both_fields_boost = _both_fields_boost_rank(result)
+    return (
+        score,
+        filename_boost,
+        both_fields_boost,
+        -result.modified_at,
+        len(result.filename),
+        result.path,
+    )
