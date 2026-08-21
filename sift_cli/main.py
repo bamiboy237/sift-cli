@@ -32,13 +32,16 @@ def build_app_config(
 
 
 def bootstrap_app() -> tuple[LaunchConfig, SearchController, AppConfig]:
-    """Load config and prepare runtime state."""
+    """Load config and prepare runtime state.
+
+    The fuzzy filename index is intentionally NOT built here: it is loaded in
+    a background worker after the UI paints so first paint stays fast.
+    """
 
     runtime_paths = resolve_runtime_paths()
     config = load_config(runtime_paths.config_path)
     initialize_active_database(runtime_paths.active_db_path)
     controller = SearchController(db_path=runtime_paths.active_db_path)
-    controller.refresh_fuzzy_index(runtime_paths.active_db_path)
     launch_config = _build_launch_config(runtime_paths, config)
     return launch_config, controller, config
 

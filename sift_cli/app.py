@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 from rich.text import Text
 
+from .fuzzy_index import load_fuzzy_index
 from .indexer import IndexingService
 from .messages import (
     IndexBuildAlreadyRunning,
@@ -34,6 +36,14 @@ def launch_app(
     config: LaunchConfig, controller: SearchController | None = None
 ) -> None:
     controller = controller or SearchController(db_path=config.db_path)
+    app = build_sift_app(config, controller)
+    app.run()
+
+
+def build_sift_app(config: LaunchConfig, controller: SearchController):
+    """Construct the Textual app class. Separated from launch_app so tests
+    can drive the real app headlessly."""
+
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Horizontal, Vertical
@@ -258,17 +268,21 @@ def launch_app(
             ("ctrl+c", "force_quit", "Force Quit"),
         ]
 
-        _DEBOUNCE_SECONDS = 0.2
+        _DEBOUNCE_SECONDS = 0.08
 
         def __init__(self) -> None:
             super().__init__()
             self._indexing_service = IndexingService()
             self._search_debounce_timer = None
+            self._search_workers: dict[int, Any] = {}
             self._ui_ready = False
             self._render_pending = False
             self._last_results_render_key: tuple | None = None
             self._layout_mode: LayoutMode | None = None
             self._autocomplete_visible = False
+            self._result_items: list = []
+            self._rendered_selected_index: int | None = None
+            self._fuzzy_load_seq = 0
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -294,8 +308,31 @@ def launch_app(
             self._apply_layout_mode(self.size.width, self.size.height)
             self._ui_ready = True
             self._request_render()
+            self._load_fuzzy_index_async(config.active_db_path)
             if config.auto_start_indexing:
                 self.call_after_refresh(self.action_refresh_index)
+
+        def _load_fuzzy_index_async(self, db_path: Path) -> None:
+            """Build the trigram index in a worker; install it when done."""
+
+            self._fuzzy_load_seq += 1
+            load_seq = self._fuzzy_load_seq
+
+            async def _run():
+                index = await asyncio.to_thread(load_fuzzy_index, db_path)
+                if load_seq == self._fuzzy_load_seq:
+                    controller.install_fuzzy_index(index, db_path)
+                    # If the user already typed while the index was building,
+                    # refresh suggestions for the in-progress query.
+                    search_input = self.query_one("#search", Input)
+                    if search_input.value.strip():
+                        controller.update_query(
+                            search_input.value,
+                            cursor=search_input.cursor_position,
+                        )
+                    self._request_render()
+
+            self.run_worker(_run(), name="fuzzy-index-load", thread=False)
 
         def on_resize(self, event: Resize) -> None:
             self._apply_layout_mode(event.size.width, event.size.height)
@@ -482,7 +519,9 @@ def launch_app(
             results_view = self.query_one("#results", ListView)
             state = controller.state
             if state.results:
-                render_key = ("results", state.results, state.selected_index)
+                # Selection is intentionally excluded: moving it only rewrites
+                # the two affected rows instead of rebuilding every ListItem.
+                render_key = ("results", state.results)
             else:
                 render_key = (
                     "empty",
@@ -492,36 +531,69 @@ def launch_app(
                     state.has_index,
                 )
 
-            if render_key == self._last_results_render_key:
-                return
-
-            self._last_results_render_key = render_key
-            results_view.clear()
-            if state.results:
-                total = len(state.results)
-                for index, result in enumerate(state.results):
-                    row_text = build_result_row_text(
-                        result,
-                        selected=index == state.selected_index,
-                        index=index,
-                        total=total,
-                    )
-                    results_view.append(
-                        ListItem(
+            if render_key != self._last_results_render_key:
+                self._last_results_render_key = render_key
+                results_view.clear()
+                self._result_items = []
+                if state.results:
+                    total = len(state.results)
+                    for index, result in enumerate(state.results):
+                        row_text = build_result_row_text(
+                            result,
+                            selected=index == state.selected_index,
+                            index=index,
+                            total=total,
+                        )
+                        item = ListItem(
                             Static(_styled_text(row_text)),
                             classes="selected"
                             if index == state.selected_index
                             else None,
                         )
+                        self._result_items.append(item)
+                        results_view.append(item)
+                    results_view.index = state.selected_index
+                else:
+                    empty_text = build_results_text(
+                        state,
+                        roots=config.roots,
+                        has_index=state.has_index,
                     )
-                results_view.index = state.selected_index
-            else:
-                empty_text = build_results_text(
-                    state,
-                    roots=config.roots,
-                    has_index=state.has_index,
+                    results_view.append(ListItem(Static(_styled_text(empty_text))))
+                self._rendered_selected_index = (
+                    state.selected_index if state.results else None
                 )
-                results_view.append(ListItem(Static(_styled_text(empty_text))))
+                return
+
+            if state.results and self._rendered_selected_index != state.selected_index:
+                self._sync_result_selection(state)
+
+        def _sync_result_selection(self, state) -> None:
+            """Rewrite only the previously and newly selected rows."""
+
+            total = len(state.results)
+            old_index = self._rendered_selected_index
+            new_index = max(0, min(state.selected_index, total - 1))
+            for changed in {old_index, new_index}:
+                if changed is None or changed < 0 or changed >= total:
+                    continue
+                item = self._result_items[changed]
+                item.set_classes(
+                    "selected" if changed == new_index else ""
+                )
+                item.query_one(Static).update(
+                    _styled_text(
+                        build_result_row_text(
+                            state.results[changed],
+                            selected=changed == new_index,
+                            index=changed,
+                            total=total,
+                        )
+                    )
+                )
+            self._rendered_selected_index = new_index
+            results_view = self.query_one("#results", ListView)
+            results_view.index = new_index
 
         def on_input_submitted(self, event: Input.Submitted) -> None:
             if event.input.id == "search":
@@ -560,11 +632,17 @@ def launch_app(
             )
 
         def _start_search_worker(self, query: str, request_id: int) -> None:
-            self.run_worker(
+            # Cancel superseded searches instead of letting them run to
+            # completion; request-id gating already discards their results.
+            for worker_id in list(self._search_workers):
+                worker = self._search_workers.pop(worker_id)
+                worker.cancel()
+            worker = self.run_worker(
                 self._run_search(query, request_id),
                 name=f"search:{request_id}",
                 thread=False,
             )
+            self._search_workers[request_id] = worker
 
         async def _run_search(self, query: str, request_id: int) -> None:
             db_path = controller.db_path
@@ -646,7 +724,7 @@ def launch_app(
             if isinstance(outcome, IndexBuildFailed):
                 controller.set_indexing_error(outcome.error)
             elif isinstance(outcome, IndexBuildSucceeded):
-                controller.refresh_fuzzy_index(config.active_db_path)
+                self._load_fuzzy_index_async(config.active_db_path)
                 controller.set_indexing_success(
                     files_indexed=outcome.files_indexed,
                     files_skipped=outcome.files_skipped,
@@ -655,7 +733,7 @@ def launch_app(
                 controller.finish_indexing()
             self._request_render()
 
-    SiftApp().run()
+    return SiftApp
 
 
 def _styled_text(text: str) -> Text:

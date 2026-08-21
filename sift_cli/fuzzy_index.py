@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections import Counter, defaultdict
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+from .db import connect_read_database
 from .paths import casefold_path, normalize_path
 
 
@@ -36,6 +37,11 @@ class FuzzyIndex:
         self._normalized_paths: list[str] = []
         self._basenames: list[str] = []
         self._index: dict[str, set[int]] = {}
+        # Precomputed per-row lookup structures so suggest() never allocates
+        # per candidate on the UI thread.
+        self._char_sets: list[frozenset[str]] = []
+        self._folded_basenames: list[str] = []
+        self._sort_keys: list[str] = []
         if rows is not None:
             self.update_rows(rows)
 
@@ -44,6 +50,9 @@ class FuzzyIndex:
         self._normalized_paths = [casefold_path(path) for path, _ in rows]
         self._basenames = [basename for _, basename in rows]
         self._index = build_trigram_index(self._normalized_paths)
+        self._char_sets = [frozenset(path) for path in self._normalized_paths]
+        self._folded_basenames = [basename.casefold() for basename in self._basenames]
+        self._sort_keys = [normalize_path(path) for path, _ in rows]
 
     def strategy_for_query(self, query: str) -> str:
         query = query.casefold().strip()
@@ -68,7 +77,7 @@ class FuzzyIndex:
                 FuzzySuggestion(
                     path=path,
                     basename=basename,
-                    score=self._score(path, basename, normalized_query),
+                    score=self._score(candidate_id, normalized_query),
                 )
             )
         suggestions.sort(key=lambda suggestion: suggestion.score)
@@ -85,8 +94,8 @@ class FuzzyIndex:
             query_chars = set(query)
             return [
                 index
-                for index, path in enumerate(self._normalized_paths)
-                if query_chars.issubset(set(path))
+                for index, char_set in enumerate(self._char_sets)
+                if query_chars.issubset(char_set)
             ]
 
         query_trigrams = extract_trigrams(query)
@@ -99,10 +108,10 @@ class FuzzyIndex:
         ]
 
     def _score(
-        self, path: str, basename: str, query: str
+        self, candidate_id: int, query: str
     ) -> tuple[int, int, int, int, int, int, str]:
-        normalized_path = path.casefold()
-        normalized_basename = basename.casefold()
+        normalized_path = self._normalized_paths[candidate_id]
+        normalized_basename = self._folded_basenames[candidate_id]
         basename_match = 0 if normalized_basename == query else 1
         basename_prefix = 0 if normalized_basename.startswith(query) else 1
         basename_length = len(normalized_basename)
@@ -122,12 +131,12 @@ class FuzzyIndex:
             basename_overlap,
             boundary_match,
             deep_match,
-            normalize_path(path),
+            self._sort_keys[candidate_id],
         )
 
 
 def load_fuzzy_index(db_path: Path) -> FuzzyIndex:
-    with sqlite3.connect(db_path) as connection:
+    with closing(connect_read_database(db_path)) as connection:
         rows = connection.execute(
             "SELECT path, filename FROM files ORDER BY path ASC"
         ).fetchall()

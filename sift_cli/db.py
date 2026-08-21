@@ -79,6 +79,32 @@ def resolve_runtime_paths(
     )
 
 
+def connect_read_database(db_path: Path) -> sqlite3.Connection:
+    """Open a tuned read connection. Caller is responsible for closing."""
+
+    if not db_path.exists():
+        raise FileNotFoundError(f"Index database not found: {db_path}")
+    connection = sqlite3.connect(db_path, timeout=5.0)
+    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute("PRAGMA mmap_size = 268435456")
+    connection.execute("PRAGMA cache_size = -16000")
+    connection.execute("PRAGMA temp_store = MEMORY")
+    return connection
+
+
+def connect_staging_database(db_path: Path) -> sqlite3.Connection:
+    """Open a throwaway-fast connection for staging builds. Caller closes."""
+
+    connection = sqlite3.connect(db_path, timeout=5.0)
+    # Staging databases are disposable: if a build fails they are deleted and
+    # rebuilt, so durability pragmas only slow the build down.
+    connection.execute("PRAGMA journal_mode = OFF")
+    connection.execute("PRAGMA synchronous = OFF")
+    connection.execute("PRAGMA cache_size = -64000")
+    connection.execute("PRAGMA temp_store = MEMORY")
+    return connection
+
+
 def initialize_database(db_path: Path) -> None:
     """Create the schema at the given path."""
 

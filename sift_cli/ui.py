@@ -422,6 +422,19 @@ class SearchController:
             ),
         )
 
+    def install_fuzzy_index(self, fuzzy_index: FuzzyIndex, db_path: Path) -> None:
+        """Install an already-loaded fuzzy index (built off the UI thread)."""
+
+        self._db_path = db_path
+        self._fuzzy_index = fuzzy_index
+        self.state = replace(
+            self.state,
+            has_index=_has_completed_index(db_path),
+            last_successful_index_timestamp=_load_last_successful_index_timestamp(
+                db_path
+            ),
+        )
+
     def start_indexing(self) -> None:
         self.state = replace(self.state, indexing=True)
 

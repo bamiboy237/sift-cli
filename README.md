@@ -25,6 +25,7 @@ persistent terminal UI.
 - filename
 - content
 - both
+- partial words match as you type (`docu` finds `document`)
 - filters:
   - `ext:md`
   - `path:notes`

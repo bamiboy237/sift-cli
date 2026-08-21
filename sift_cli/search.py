@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 
+from .db import connect_read_database
 from .models import SearchResult
 from .parser import ParsedQuery, is_empty_query, is_filter_only_query, parse_query
 
 HIGHLIGHT_START = "\x1f"
 HIGHLIGHT_END = "\x1e"
 RESULT_LIMIT = 50
-FTS_CANDIDATE_LIMIT = 500
+# Candidates fetched from SQL before application-side boosts re-rank them.
+# Must be comfortably larger than RESULT_LIMIT so filename/both-fields boosts
+# can pull rows into the visible window even when raw bm25 ranks them low.
+FTS_CANDIDATE_LIMIT = 1000
 
 
 def search_files(db_path: Path, raw_query: str) -> list[SearchResult]:
@@ -20,7 +26,7 @@ def search_files(db_path: Path, raw_query: str) -> list[SearchResult]:
     if is_empty_query(parsed):
         return []
 
-    with sqlite3.connect(db_path) as connection:
+    with closing(connect_read_database(db_path)) as connection:
         connection.row_factory = sqlite3.Row
         if is_filter_only_query(parsed):
             return _search_metadata_only(connection, parsed)
@@ -190,22 +196,61 @@ def _search_text(
     if not clauses:
         return _search_metadata_only(connection, parsed)
 
-    sql = f"""
-        SELECT
-            files.path,
-            files.filename,
-            files.ext,
-            files.size,
-            files.modified_at,
-            files.content,
-            COALESCE(bm25(files_fts, 8.0, 1.0), 999999.0) AS score
-        FROM files
-        JOIN files_fts ON files_fts.rowid = files.id
-        WHERE {" AND ".join(clauses)}
-        ORDER BY score ASC, files.modified_at DESC, files.path ASC
-        LIMIT ?
-    """
-    rows = connection.execute(sql, [*params, FTS_CANDIDATE_LIMIT]).fetchall()
+    # Matched-field flags and snippets are computed inside SQLite so we never
+    # casefold full file contents in Python per query.
+    flag_params: list[object] = []
+    matched_filename_expr = " OR ".join(
+        "instr(lower(files.filename), ?) > 0" for _ in all_terms
+    )
+    flag_params.extend(term.casefold().strip('"') for term in all_terms)
+    matched_content_expr = " OR ".join(
+        "instr(lower(coalesce(files.content, '')), ?) > 0" for _ in all_terms
+    )
+    flag_params.extend(term.casefold().strip('"') for term in all_terms)
+
+    if fts_expression:
+        # Candidate rows stay tiny: no `files.content`, no snippet(). With
+        # ORDER BY, SQLite evaluates SELECT expressions for every candidate
+        # row, so expensive per-row work must wait until the app-side boost
+        # re-rank has chosen the visible rows.
+        sql = f"""
+            SELECT
+                files.id AS file_id,
+                files.path,
+                files.filename,
+                files.ext,
+                files.size,
+                files.modified_at,
+                ({matched_filename_expr}) AS matched_filename,
+                ({matched_content_expr}) AS matched_content,
+                COALESCE(bm25(files_fts, 8.0, 1.0), 999999.0) AS score
+            FROM files
+            JOIN files_fts ON files_fts.rowid = files.id
+            WHERE {" AND ".join(clauses)}
+            ORDER BY score ASC, files.modified_at DESC, files.path ASC
+            LIMIT ?
+        """
+    else:
+        sql = f"""
+            SELECT
+                files.id AS file_id,
+                files.path,
+                files.filename,
+                files.ext,
+                files.size,
+                files.modified_at,
+                files.content,
+                ({matched_filename_expr}) AS matched_filename,
+                ({matched_content_expr}) AS matched_content,
+                NULL AS sql_snippet,
+                COALESCE(bm25(files_fts, 8.0, 1.0), 999999.0) AS score
+            FROM files
+            JOIN files_fts ON files_fts.rowid = files.id
+            WHERE {" AND ".join(clauses)}
+            ORDER BY score ASC, files.modified_at DESC, files.path ASC
+            LIMIT ?
+        """
+    rows = connection.execute(sql, [*flag_params, *params, FTS_CANDIDATE_LIMIT]).fetchall()
     search_terms = (
         list(parsed.text_terms)
         + list(parsed.phrases)
@@ -213,22 +258,96 @@ def _search_text(
         + list(parsed.content_terms)
     )
     normalized_free_text = _normalized_free_text_query(parsed)
-    results = [
-        SearchResult(
-            path=row["path"],
-            filename=row["filename"],
-            ext=row["ext"],
-            size=row["size"],
-            modified_at=row["modified_at"],
-            snippet=_build_snippet(row["content"], search_terms),
-            matched_filename=_matched_filename(row["filename"], search_terms),
-            matched_content=_matched_content(row["content"], search_terms),
+    # Sort on raw row values; only the visible rows become SearchResult
+    # objects, so candidate count stays cheap.
+    sort_entries: list[tuple[tuple, sqlite3.Row]] = []
+    for row in rows:
+        key = _sort_key_components(
             score=row["score"],
+            filename=row["filename"],
+            matched_filename=bool(row["matched_filename"]),
+            matched_content=bool(row["matched_content"]),
+            modified_at=row["modified_at"],
+            path=row["path"],
+            normalized_query=normalized_free_text,
         )
-        for row in rows
+        sort_entries.append((key, row))
+    sort_entries.sort(key=lambda entry: entry[0])
+    visible_rows = [row for _, row in sort_entries[:RESULT_LIMIT]]
+    results = [
+        _result_from_row(
+            row,
+            search_terms=search_terms,
+            python_snippet=not fts_expression,
+        )
+        for row in visible_rows
     ]
-    results.sort(key=lambda result: _search_sort_key(result, normalized_free_text))
-    return results[:RESULT_LIMIT]
+    if fts_expression:
+        file_id_by_path = {row["path"]: row["file_id"] for row in visible_rows}
+        entries = [(result, file_id_by_path[result.path]) for result in results]
+        return _attach_sql_snippets(connection, entries, fts_expression)
+    return results
+
+
+def _result_from_row(
+    row: sqlite3.Row,
+    *,
+    search_terms: list[str],
+    python_snippet: bool,
+) -> SearchResult:
+    matched_content = bool(row["matched_content"])
+    snippet: str | None = None
+    if matched_content and python_snippet:
+        snippet = _build_snippet(row["content"], search_terms)
+    return SearchResult(
+        path=row["path"],
+        filename=row["filename"],
+        ext=row["ext"],
+        size=row["size"],
+        modified_at=row["modified_at"],
+        snippet=snippet,
+        matched_filename=bool(row["matched_filename"]),
+        matched_content=matched_content,
+        score=row["score"],
+    )
+
+
+def _attach_sql_snippets(
+    connection: sqlite3.Connection,
+    entries: list[tuple[SearchResult, int]],
+    fts_expression: str,
+) -> list[SearchResult]:
+    """Compute snippets inside SQLite for the final visible rows only."""
+
+    pending_ids = [
+        file_id
+        for result, file_id in entries
+        if result.matched_content and result.snippet is None
+    ]
+    if not pending_ids:
+        return [result for result, _ in entries]
+
+    placeholders = ", ".join("?" for _ in pending_ids)
+    snippet_rows = connection.execute(
+        f"""
+        SELECT rowid, snippet(files_fts, 1, '{HIGHLIGHT_START}', '{HIGHLIGHT_END}', '…', 12) AS snip
+        FROM files_fts
+        WHERE files_fts MATCH ? AND rowid IN ({placeholders})
+        """,
+        [fts_expression, *pending_ids],
+    ).fetchall()
+    snippet_by_rowid = {row["rowid"]: row["snip"] for row in snippet_rows}
+
+    results: list[SearchResult] = []
+    for result, file_id in entries:
+        if (
+            result.matched_content
+            and result.snippet is None
+            and file_id in snippet_by_rowid
+        ):
+            result = replace(result, snippet=snippet_by_rowid[file_id])
+        results.append(result)
+    return results
 
 
 def _matched_filename(filename: str, terms: list[str]) -> bool:
@@ -262,7 +381,9 @@ def _build_fts_expression(text_terms: list[str], phrase_terms: list[str]) -> str
     for term in text_terms:
         normalized = term.strip()
         if normalized:
-            clauses.append(_fts_quote(normalized))
+            # Prefix match so results refine as the user types ("docu" finds
+            # "document"). Phrases stay exact below.
+            clauses.append(f"{_fts_quote(normalized)}*")
     for phrase in phrase_terms:
         normalized = phrase.strip()
         if normalized:
@@ -315,21 +436,38 @@ def _filename_boost_rank(filename: str, normalized_query: str) -> int:
     return 3
 
 
-def _both_fields_boost_rank(result: SearchResult) -> int:
-    return 0 if result.matched_filename and result.matched_content else 1
-
-
 def _search_sort_key(
     result: SearchResult, normalized_free_text: str
 ) -> tuple[float, int, int, float, int, str]:
-    score = result.score if result.score is not None else 999999.0
-    filename_boost = _filename_boost_rank(result.filename, normalized_free_text)
-    both_fields_boost = _both_fields_boost_rank(result)
+    return _sort_key_components(
+        score=result.score,
+        filename=result.filename,
+        matched_filename=result.matched_filename,
+        matched_content=result.matched_content,
+        modified_at=result.modified_at,
+        path=result.path,
+        normalized_query=normalized_free_text,
+    )
+
+
+def _sort_key_components(
+    *,
+    score: float | None,
+    filename: str,
+    matched_filename: bool,
+    matched_content: bool,
+    modified_at: float,
+    path: str,
+    normalized_query: str,
+) -> tuple[float, int, int, float, int, str]:
+    resolved_score = score if score is not None else 999999.0
+    filename_boost = _filename_boost_rank(filename, normalized_query)
+    both_fields_boost = 0 if matched_filename and matched_content else 1
     return (
-        score,
+        resolved_score,
         filename_boost,
         both_fields_boost,
-        -result.modified_at,
-        len(result.filename),
-        result.path,
+        -modified_at,
+        len(filename),
+        path,
     )

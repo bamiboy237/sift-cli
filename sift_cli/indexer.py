@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 import threading
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +12,7 @@ from typing import Callable
 
 from .db import (
     cleanup_database_artifacts,
+    connect_staging_database,
     publish_staging_database,
     reset_staging_database,
 )
@@ -58,7 +59,9 @@ def build_index(
     seen_paths: set[str] = set()
 
     try:
-        with sqlite3.connect(staging_db_path) as connection:
+        with (
+            closing(connect_staging_database(staging_db_path)) as connection
+        ):
             for root in roots:
                 for file_path in _iter_files(
                     root, ignore_dirs, include_hidden_dirs=include_hidden_dirs
