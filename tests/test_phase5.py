@@ -8,7 +8,12 @@ from unittest.mock import patch
 from sift_cli.app import _layout_mode_for_size
 from sift_cli.fuzzy_index import FuzzyIndex
 from sift_cli.models import SearchResult
-from sift_cli.ui import SearchController, SearchState, build_autocomplete_text, build_preview_text
+from sift_cli.ui import (
+    SearchController,
+    SearchState,
+    build_autocomplete_text,
+    build_preview_text,
+)
 
 
 def _result(path: str, filename: str) -> SearchResult:

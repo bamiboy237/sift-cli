@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,39 +56,39 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parsed.exts, ("md",))
 
     def test_parse_query_supports_simple_date_phrases(self) -> None:
-        now = datetime(2024, 4, 17, 15, 30, tzinfo=timezone.utc)
+        now = datetime(2024, 4, 17, 15, 30, tzinfo=UTC)
 
         today = parse_query("today", now=now)
         yesterday = parse_query("yesterday", now=now)
         this_week = parse_query("this week", now=now)
         last_7_days = parse_query("last 7 days", now=now)
 
-        self.assertEqual(today.after, datetime(2024, 4, 17, 0, 0, tzinfo=timezone.utc).timestamp())
-        self.assertEqual(today.before, datetime(2024, 4, 18, 0, 0, tzinfo=timezone.utc).timestamp())
-        self.assertEqual(yesterday.after, datetime(2024, 4, 16, 0, 0, tzinfo=timezone.utc).timestamp())
-        self.assertEqual(yesterday.before, datetime(2024, 4, 17, 0, 0, tzinfo=timezone.utc).timestamp())
-        self.assertEqual(this_week.after, datetime(2024, 4, 15, 0, 0, tzinfo=timezone.utc).timestamp())
-        self.assertEqual(this_week.before, datetime(2024, 4, 22, 0, 0, tzinfo=timezone.utc).timestamp())
-        self.assertEqual(last_7_days.after, datetime(2024, 4, 10, 15, 30, tzinfo=timezone.utc).timestamp())
-        self.assertEqual(last_7_days.before, datetime(2024, 4, 17, 15, 30, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(today.after, datetime(2024, 4, 17, 0, 0, tzinfo=UTC).timestamp())
+        self.assertEqual(today.before, datetime(2024, 4, 18, 0, 0, tzinfo=UTC).timestamp())
+        self.assertEqual(yesterday.after, datetime(2024, 4, 16, 0, 0, tzinfo=UTC).timestamp())
+        self.assertEqual(yesterday.before, datetime(2024, 4, 17, 0, 0, tzinfo=UTC).timestamp())
+        self.assertEqual(this_week.after, datetime(2024, 4, 15, 0, 0, tzinfo=UTC).timestamp())
+        self.assertEqual(this_week.before, datetime(2024, 4, 22, 0, 0, tzinfo=UTC).timestamp())
+        self.assertEqual(last_7_days.after, datetime(2024, 4, 10, 15, 30, tzinfo=UTC).timestamp())
+        self.assertEqual(last_7_days.before, datetime(2024, 4, 17, 15, 30, tzinfo=UTC).timestamp())
 
     def test_parse_query_supports_from_month_phrases(self) -> None:
-        now = datetime(2024, 4, 17, 15, 30, tzinfo=timezone.utc)
+        now = datetime(2024, 4, 17, 15, 30, tzinfo=UTC)
 
         from_march = parse_query("from march", now=now)
         from_march_year = parse_query("from march 2024", now=now)
 
-        self.assertEqual(from_march.after, datetime(2024, 3, 1, 0, 0, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(from_march.after, datetime(2024, 3, 1, 0, 0, tzinfo=UTC).timestamp())
         self.assertEqual(from_march.before, now.timestamp())
-        self.assertEqual(from_march_year.after, datetime(2024, 3, 1, 0, 0, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(from_march_year.after, datetime(2024, 3, 1, 0, 0, tzinfo=UTC).timestamp())
         self.assertEqual(from_march_year.before, now.timestamp())
 
     def test_parse_query_supports_month_year_in_after_before_filters(self) -> None:
-        now = datetime(2024, 7, 3, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 7, 3, 12, 0, tzinfo=UTC)
         parsed = parse_query("after:march 2024 before:april 2024", now=now)
 
-        self.assertEqual(parsed.after, datetime(2024, 3, 1, 0, 0, tzinfo=timezone.utc).timestamp())
-        self.assertEqual(parsed.before, datetime(2024, 5, 1, 0, 0, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(parsed.after, datetime(2024, 3, 1, 0, 0, tzinfo=UTC).timestamp())
+        self.assertEqual(parsed.before, datetime(2024, 5, 1, 0, 0, tzinfo=UTC).timestamp())
 
     def test_parse_query_treats_unknown_operator_as_free_text(self) -> None:
         parsed = parse_query("foo:bar")

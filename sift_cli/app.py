@@ -65,7 +65,8 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
         CSS = """
         Screen {
             layout: vertical;
-            background: $background;
+            background: #090a0f;
+            color: #f0f4fc;
         }
 
         #content {
@@ -73,6 +74,7 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
             min-height: 0;
             padding: 0 1;
             overflow: hidden;
+            background: #090a0f;
         }
 
         #top {
@@ -86,9 +88,10 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
             width: 34;
             min-width: 24;
             margin-right: 1;
-            border: round $primary;
+            border: solid #1c2030;
             padding: 0 1;
-            background: $surface 8%;
+            background: #0d0e16;
+            color: #8b95a5;
             overflow-y: auto;
             overflow-x: hidden;
         }
@@ -100,25 +103,31 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
         }
 
         #banner {
-            border: round $secondary;
+            border: solid #1c2030;
             padding: 0 1;
             margin: 0 0 1 0;
-            background: $surface 9%;
+            background: #0d0e16;
+            color: #8b95a5;
         }
 
         #search {
             margin: 0 0 1 0;
-            border: round $warning;
+            border: solid #262d42;
             padding: 0 1;
-            background: $surface 10%;
+            background: #10121c;
+            color: #ffffff;
+        }
+
+        #search:focus {
+            border: solid #3875f6;
         }
 
         #results-shell {
             height: 1fr;
             min-height: 0;
-            border: round $accent;
+            border: solid #1c2030;
             padding: 0 1;
-            background: $surface 6%;
+            background: #090a0f;
             overflow: hidden;
         }
 
@@ -126,6 +135,7 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
             height: 1fr;
             width: 3fr;
             min-height: 0;
+            background: transparent;
         }
 
         #preview {
@@ -133,10 +143,11 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
             height: 1fr;
             min-height: 0;
             min-width: 32;
-            border: round $error;
+            border: solid #1c2030;
             padding: 0 1;
             margin-left: 1;
-            background: $surface 6%;
+            background: #0c0d14;
+            color: #b4bccb;
             overflow-y: auto;
             overflow-x: hidden;
         }
@@ -145,9 +156,10 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
             height: auto;
             max-height: 8;
             margin: 0 0 1 0;
-            border: round $success;
+            border: solid #3875f6;
             padding: 0 1;
-            background: $surface 9%;
+            background: #121522;
+            color: #f0f4fc;
             overflow-y: auto;
             overflow-x: hidden;
         }
@@ -162,19 +174,23 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
 
         #status {
             height: 1;
-            color: $text-muted;
+            color: #8b95a5;
             padding: 0 1;
-            border-top: solid $surface 30%;
+            background: #0d0e16;
         }
 
         #spinner {
             width: 3;
             margin-right: 1;
+            color: #7aa2f7;
         }
 
         #status-line {
             height: 1;
             min-height: 1;
+            background: #0d0e16;
+            border-top: solid #181b26;
+            padding: 0 1;
         }
 
         Screen.-mode-stacked #results-shell {
@@ -229,18 +245,23 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
 
         ListItem {
             margin: 0 0 1 0;
-            border: round $surface 30%;
+            border: solid #181b26;
             padding: 0 1;
-            background: $surface 8%;
+            background: #0d0f18;
+        }
+
+        ListItem:hover {
+            background: #101322;
         }
 
         ListItem.selected {
-            background: $surface 18%;
-            border: round $primary;
+            background: #141724;
+            border: solid #2a334c;
+            border-left: tall #3875f6;
         }
 
         Static {
-            color: $text;
+            color: #c0c6d4;
         }
 
         Input {
@@ -248,11 +269,32 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
         }
 
         .muted {
-            color: $text-muted;
+            color: #5b6477;
         }
 
         .title {
             text-style: bold;
+            color: #ffffff;
+        }
+
+        Header {
+            background: #0d0e16;
+            color: #ffffff;
+        }
+
+        Footer {
+            background: #0d0e16;
+            color: #8b95a5;
+        }
+
+        Footer > .footer--key {
+            background: #181c2c;
+            color: #7aa2f7;
+        }
+
+        Footer > .footer--highlight {
+            background: #3875f6;
+            color: #ffffff;
         }
         """
 
@@ -736,21 +778,49 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
     return SiftApp
 
 
-def _styled_text(text: str) -> Text:
-    rendered = Text()
+def _append_delimited(rendered: Text, text: str, default_style: str = "") -> None:
     i = 0
     while i < len(text):
         start = text.find("\x1f", i)
         if start == -1:
-            rendered.append(text[i:])
+            rendered.append(text[i:], style=default_style or None)
             break
-        rendered.append(text[i:start])
+        if start > i:
+            rendered.append(text[i:start], style=default_style or None)
         end = text.find("\x1e", start + 1)
         if end == -1:
-            rendered.append(text[start:])
+            rendered.append(text[start:], style=default_style or None)
             break
-        rendered.append(text[start + 1 : end], style="bold yellow")
+        rendered.append(text[start + 1 : end], style="bold #ffb454 on #2b2010")
         i = end + 1
+
+
+def _styled_text(text: str) -> Text:
+    rendered = Text()
+    lines = text.split("\n")
+    for line_idx, line in enumerate(lines):
+        if line_idx > 0:
+            rendered.append("\n")
+
+        if line.startswith("SIFT CLI"):
+            rendered.append("◆ ", style="bold #7aa2f7")
+            rendered.append("SIFT CLI", style="bold #ffffff")
+        elif line in ("Scope", "Index", "Query", "Keys", "Autocomplete"):
+            rendered.append(f"• {line}", style="bold #7aa2f7")
+        elif line.startswith("Query:"):
+            rendered.append("Query: ", style="bold #7aa2f7")
+            _append_delimited(rendered, line[len("Query:") :], default_style="#ffffff")
+        elif line.startswith("> "):
+            rendered.append("▶ ", style="bold #3875f6")
+            _append_delimited(rendered, line[2:], default_style="bold #ffffff")
+        elif line.startswith("  ") and (line.strip().startswith("~/") or line.strip().startswith("/")):
+            rendered.append("  ", style="")
+            rendered.append(line.strip(), style="#6e7991")
+        elif line.startswith("─"):
+            rendered.append(line, style="#262d42")
+        else:
+            _append_delimited(rendered, line)
+
     return rendered
 
 

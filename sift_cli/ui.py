@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Sequence
 
 from .actions import FileActionError, open_file
 from .autocomplete import (
@@ -94,7 +94,7 @@ def build_query_banner_text(state: SearchState, *, has_index: bool = False) -> s
     mode = state.mode.replace("-", " ")
     refreshed = (
         datetime.fromtimestamp(
-            state.last_successful_index_timestamp, tz=timezone.utc
+            state.last_successful_index_timestamp, tz=UTC
         ).strftime("%Y-%m-%d %H:%M UTC")
         if state.last_successful_index_timestamp is not None
         else "never"
@@ -111,7 +111,7 @@ def build_sidebar_text(
     index_state = "Ready" if has_index or state.has_index else "Not built yet"
     refreshed = (
         datetime.fromtimestamp(
-            state.last_successful_index_timestamp, tz=timezone.utc
+            state.last_successful_index_timestamp, tz=UTC
         ).strftime("%Y-%m-%d %H:%M UTC")
         if state.last_successful_index_timestamp is not None
         else "never"
@@ -275,7 +275,7 @@ def build_status_text(
 
 
 def format_result_view(result: SearchResult) -> ResultViewModel:
-    modified = datetime.fromtimestamp(result.modified_at, tz=timezone.utc)
+    modified = datetime.fromtimestamp(result.modified_at, tz=UTC)
     return ResultViewModel(
         filename=result.filename,
         path=result.path,
@@ -537,7 +537,7 @@ class SearchController:
         completed_at = (
             indexed_at
             if indexed_at is not None
-            else datetime.now(timezone.utc).timestamp()
+            else datetime.now(UTC).timestamp()
         )
         details = f"Index refreshed: {files_indexed} files"
         if files_skipped:

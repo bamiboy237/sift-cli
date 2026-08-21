@@ -1,22 +1,21 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
-import tempfile
 
 from sift_cli.db import initialize_database
-
 from sift_cli.fuzzy_index import FuzzyIndex
 from sift_cli.models import SearchResult
 from sift_cli.ui import (
     SearchController,
     SearchState,
-    build_query_banner_text,
     build_autocomplete_text,
-    build_results_text,
+    build_query_banner_text,
     build_result_row_text,
+    build_results_text,
     build_sidebar_text,
     build_status_text,
 )

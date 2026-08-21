@@ -7,9 +7,23 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from sift_cli.config import DEFAULT_IGNORE_DIRS, DEFAULT_MAX_EXTRACTED_FILE_SIZE, default_config, load_config
-from sift_cli.db import initialize_database, publish_staging_database, resolve_runtime_paths
-from sift_cli.paths import default_config_path, default_index_roots, default_state_dir, normalize_path
+from sift_cli.config import (
+    DEFAULT_IGNORE_DIRS,
+    DEFAULT_MAX_EXTRACTED_FILE_SIZE,
+    default_config,
+    load_config,
+)
+from sift_cli.db import (
+    initialize_database,
+    publish_staging_database,
+    resolve_runtime_paths,
+)
+from sift_cli.paths import (
+    default_config_path,
+    default_index_roots,
+    default_state_dir,
+    normalize_path,
+)
 
 
 class PathTests(unittest.TestCase):

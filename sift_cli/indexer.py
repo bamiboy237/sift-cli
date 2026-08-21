@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from .db import (
     cleanup_database_artifacts,
@@ -51,7 +51,7 @@ def build_index(
 
     extractor_func = extractor or extract_text_content
     stats = IndexStats()
-    indexed_at = datetime.now(timezone.utc).timestamp()
+    indexed_at = datetime.now(UTC).timestamp()
     batch: list[
         tuple[str, str, str | None, str | None, int, float | None, float, float]
     ] = []

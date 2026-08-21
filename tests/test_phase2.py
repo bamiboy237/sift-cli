@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -164,7 +164,7 @@ class IndexingTests(unittest.TestCase):
             file_path = root / "notes.md"
             file_path.write_text("alpha", encoding="utf-8")
 
-            old_mtime = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
+            old_mtime = datetime(2020, 1, 1, tzinfo=UTC).timestamp()
             Path(file_path).touch()
             import os
 

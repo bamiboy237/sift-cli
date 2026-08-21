@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-
+from datetime import UTC, datetime, timedelta
 
 _MONTHS = {
     "january": 1,
@@ -43,7 +42,7 @@ def parse_query(raw_query: str, *, now: datetime | None = None) -> ParsedQuery:
     if not raw:
         return ParsedQuery(raw=raw_query, text_terms=(), phrases=(), filename_terms=(), content_terms=(), exts=(), path_terms=(), after=None, before=None, size_min=None, size_max=None)
 
-    current = now or datetime.now(timezone.utc)
+    current = now or datetime.now(UTC)
     tokens = _tokenize(raw_query)
 
     text_terms: list[str] = []
@@ -256,7 +255,7 @@ def _parse_separated_field_clause(tokens: list[str], index: int) -> tuple[str, s
 
 def _parse_date_phrase(token: str, current: datetime) -> tuple[float, float] | None:
     phrase = token.casefold().strip()
-    today_start = current.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = current.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     if phrase == "today":
         return today_start.timestamp(), (today_start + timedelta(days=1)).timestamp()
     if phrase == "yesterday":
@@ -266,7 +265,7 @@ def _parse_date_phrase(token: str, current: datetime) -> tuple[float, float] | N
         week_start = today_start - timedelta(days=today_start.weekday())
         return week_start.timestamp(), (week_start + timedelta(days=7)).timestamp()
     if phrase == "last 7 days":
-        return (current.astimezone(timezone.utc) - timedelta(days=7)).timestamp(), current.astimezone(timezone.utc).timestamp()
+        return (current.astimezone(UTC) - timedelta(days=7)).timestamp(), current.astimezone(UTC).timestamp()
     return None
 
 
@@ -288,9 +287,9 @@ def _parse_from_phrase(tokens: list[str], index: int, current: datetime) -> tupl
             year = int(year_token)
             next_index = index + 3
 
-    current_utc = current.astimezone(timezone.utc)
+    current_utc = current.astimezone(UTC)
     resolved_year = year if year is not None else _resolve_year_for_month(month=month, current=current_utc)
-    start = datetime(resolved_year, month, 1, tzinfo=timezone.utc)
+    start = datetime(resolved_year, month, 1, tzinfo=UTC)
     return start.timestamp(), current_utc.timestamp(), next_index
 
 
@@ -312,7 +311,7 @@ def _parse_date_value(value: str, current: datetime) -> tuple[float, float]:
     match = re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip())
     if not match:
         raise ValueError(f"invalid date value: {value}")
-    dt = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    dt = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
     start = dt.timestamp()
     return start, (dt + timedelta(days=1)).timestamp()
 
@@ -331,17 +330,17 @@ def _parse_month_or_month_year(value: str, current: datetime) -> tuple[float, fl
         return None
 
     if len(parts) == 1:
-        year = _resolve_year_for_month(month=month, current=current.astimezone(timezone.utc))
+        year = _resolve_year_for_month(month=month, current=current.astimezone(UTC))
     else:
         if not re.fullmatch(r"\d{4}", parts[1]):
             return None
         year = int(parts[1])
 
-    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    start = datetime(year, month, 1, tzinfo=UTC)
     if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        end = datetime(year + 1, 1, 1, tzinfo=UTC)
     else:
-        end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+        end = datetime(year, month + 1, 1, tzinfo=UTC)
     return start.timestamp(), end.timestamp()
 
 
@@ -370,4 +369,4 @@ def _looks_like_size_operator(token: str) -> bool:
 
 def _looks_like_date_operator(token: str) -> bool:
     lowered = token.casefold()
-    return lowered.startswith("after:") or lowered.startswith("before:")
+    return lowered.startswith(("after:", "before:"))
