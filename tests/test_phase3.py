@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from sift_cli.db import initialize_database
 from sift_cli.models import SearchResult
@@ -38,6 +39,22 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(parsed.after is not None)
         self.assertTrue(parsed.before is not None)
 
+    def test_parse_query_supports_space_separated_field_values(self) -> None:
+        parsed = parse_query('filename: resume content: "auth bug" path: notes ext: .md')
+
+        self.assertEqual(parsed.filename_terms, ("resume",))
+        self.assertEqual(parsed.content_terms, ("auth bug",))
+        self.assertEqual(parsed.path_terms, ("notes",))
+        self.assertEqual(parsed.exts, ("md",))
+
+    def test_parse_query_space_separated_field_values_are_case_insensitive(self) -> None:
+        parsed = parse_query('Filename: resume Content: "auth bug" Path: notes EXT: .MD')
+
+        self.assertEqual(parsed.filename_terms, ("resume",))
+        self.assertEqual(parsed.content_terms, ("auth bug",))
+        self.assertEqual(parsed.path_terms, ("notes",))
+        self.assertEqual(parsed.exts, ("md",))
+
     def test_parse_query_supports_simple_date_phrases(self) -> None:
         now = datetime(2024, 4, 17, 15, 30, tzinfo=timezone.utc)
 
@@ -54,6 +71,24 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(this_week.before, datetime(2024, 4, 22, 0, 0, tzinfo=timezone.utc).timestamp())
         self.assertEqual(last_7_days.after, datetime(2024, 4, 10, 15, 30, tzinfo=timezone.utc).timestamp())
         self.assertEqual(last_7_days.before, datetime(2024, 4, 17, 15, 30, tzinfo=timezone.utc).timestamp())
+
+    def test_parse_query_supports_from_month_phrases(self) -> None:
+        now = datetime(2024, 4, 17, 15, 30, tzinfo=timezone.utc)
+
+        from_march = parse_query("from march", now=now)
+        from_march_year = parse_query("from march 2024", now=now)
+
+        self.assertEqual(from_march.after, datetime(2024, 3, 1, 0, 0, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(from_march.before, now.timestamp())
+        self.assertEqual(from_march_year.after, datetime(2024, 3, 1, 0, 0, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(from_march_year.before, now.timestamp())
+
+    def test_parse_query_supports_month_year_in_after_before_filters(self) -> None:
+        now = datetime(2024, 7, 3, 12, 0, tzinfo=timezone.utc)
+        parsed = parse_query("after:march 2024 before:april 2024", now=now)
+
+        self.assertEqual(parsed.after, datetime(2024, 3, 1, 0, 0, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(parsed.before, datetime(2024, 5, 1, 0, 0, tzinfo=timezone.utc).timestamp())
 
     def test_parse_query_treats_unknown_operator_as_free_text(self) -> None:
         parsed = parse_query("foo:bar")
@@ -106,8 +141,105 @@ class SearchTests(unittest.TestCase):
             results = search_files(db_path, "alpha")
 
         self.assertEqual(len(results), 1)
-        self.assertIsNotNone(results[0].snippet)
-        self.assertIn("alpha", results[0].snippet.lower())
+        snippet = results[0].snippet
+        if snippet is None:
+            self.fail("expected snippet for content match")
+        self.assertIn("\x1falpha\x1e", snippet.lower())
+
+    def test_quoted_phrase_query_matches_adjacent_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "index.db"
+            initialize_database(db_path)
+            seed_file(db_path, path="/docs/exact.md", filename="exact.md", ext="md", content="auth bug fixed", size=14, modified_at=2.0)
+            seed_file(
+                db_path,
+                path="/docs/separate.md",
+                filename="separate.md",
+                ext="md",
+                content="auth login bug",  # non-adjacent phrase
+                size=15,
+                modified_at=1.0,
+            )
+
+            results = search_files(db_path, '"auth bug"')
+
+        self.assertEqual([result.filename for result in results], ["exact.md"])
+
+    def test_fts_fallback_keeps_field_scoped_content_and_filename_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "index.db"
+            initialize_database(db_path)
+            seed_file(db_path, path="/docs/alpha.md", filename="alpha.md", ext="md", content="auth bug", size=8, modified_at=3.0)
+            seed_file(db_path, path="/docs/beta.md", filename="beta.md", ext="md", content="other", size=8, modified_at=2.0)
+
+            original_connect = sqlite3.connect
+
+            class _ConnProxy:
+                def __init__(self, conn: sqlite3.Connection) -> None:
+                    object.__setattr__(self, "_conn", conn)
+
+                def __setattr__(self, name, value):
+                    if name == "_conn":
+                        object.__setattr__(self, name, value)
+                        return
+                    setattr(self._conn, name, value)
+
+                def __enter__(self):
+                    self._conn.__enter__()
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return self._conn.__exit__(exc_type, exc, tb)
+
+                def __getattr__(self, name):
+                    return getattr(self._conn, name)
+
+                def execute(self, sql, params=()):
+                    if "files_fts MATCH" in sql:
+                        raise sqlite3.OperationalError("fts5: syntax error")
+                    return self._conn.execute(sql, params)
+
+            with patch("sift_cli.search.sqlite3.connect", side_effect=lambda *args, **kwargs: _ConnProxy(original_connect(*args, **kwargs))):
+                results = search_files(db_path, 'filename:alpha content:"auth bug"')
+
+        self.assertEqual([result.filename for result in results], ["alpha.md"])
+
+    def test_fts_non_syntax_operational_error_does_not_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "index.db"
+            initialize_database(db_path)
+            seed_file(db_path, path="/docs/alpha.md", filename="alpha.md", ext="md", content="auth bug", size=8, modified_at=3.0)
+
+            original_connect = sqlite3.connect
+
+            class _ConnProxy:
+                def __init__(self, conn: sqlite3.Connection) -> None:
+                    object.__setattr__(self, "_conn", conn)
+
+                def __setattr__(self, name, value):
+                    if name == "_conn":
+                        object.__setattr__(self, name, value)
+                        return
+                    setattr(self._conn, name, value)
+
+                def __enter__(self):
+                    self._conn.__enter__()
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return self._conn.__exit__(exc_type, exc, tb)
+
+                def __getattr__(self, name):
+                    return getattr(self._conn, name)
+
+                def execute(self, sql, params=()):
+                    if "files_fts MATCH" in sql:
+                        raise sqlite3.OperationalError("fts5: database corruption")
+                    return self._conn.execute(sql, params)
+
+            with patch("sift_cli.search.sqlite3.connect", side_effect=lambda *args, **kwargs: _ConnProxy(original_connect(*args, **kwargs))):
+                with self.assertRaises(sqlite3.OperationalError):
+                    search_files(db_path, 'alpha filename:alpha content:"auth bug"')
 
     def test_text_search_accepts_punctuation_queries(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -210,11 +342,50 @@ class SearchTests(unittest.TestCase):
                 self.assertEqual([result.path for result in search_files(db_path, "alpha")], first)
 
     def test_search_sort_key_orders_by_spec_priority_chain(self) -> None:
-        base = dict(ext="md", size=10, modified_at=10.0, snippet="alpha", score=1.0)
-        result_a = _search_result(path="/z/alpha.md", filename="alpha.md", matched_filename=True, matched_content=True, **base)
-        result_b = _search_result(path="/a/alphabet.md", filename="alphabet.md", matched_filename=True, matched_content=True, **base)
-        result_c = _search_result(path="/a/notes-alpha.md", filename="notes-alpha.md", matched_filename=True, matched_content=False, **base)
-        result_d = _search_result(path="/a/notes.md", filename="notes.md", matched_filename=False, matched_content=True, **base)
+        result_a = _search_result(
+            path="/z/alpha.md",
+            filename="alpha.md",
+            ext="md",
+            size=10,
+            modified_at=10.0,
+            snippet="alpha",
+            matched_filename=True,
+            matched_content=True,
+            score=1.0,
+        )
+        result_b = _search_result(
+            path="/a/alphabet.md",
+            filename="alphabet.md",
+            ext="md",
+            size=10,
+            modified_at=10.0,
+            snippet="alpha",
+            matched_filename=True,
+            matched_content=True,
+            score=1.0,
+        )
+        result_c = _search_result(
+            path="/a/notes-alpha.md",
+            filename="notes-alpha.md",
+            ext="md",
+            size=10,
+            modified_at=10.0,
+            snippet="alpha",
+            matched_filename=True,
+            matched_content=False,
+            score=1.0,
+        )
+        result_d = _search_result(
+            path="/a/notes.md",
+            filename="notes.md",
+            ext="md",
+            size=10,
+            modified_at=10.0,
+            snippet="alpha",
+            matched_filename=False,
+            matched_content=True,
+            score=1.0,
+        )
 
         ordered = sorted([result_d, result_c, result_b, result_a], key=lambda result: _search_sort_key(result, "alpha"))
 

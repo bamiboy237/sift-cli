@@ -36,6 +36,7 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.ignore_dirs, DEFAULT_IGNORE_DIRS)
         self.assertEqual(config.max_extracted_file_size, DEFAULT_MAX_EXTRACTED_FILE_SIZE)
+        self.assertFalse(config.include_hidden_dirs)
         self.assertEqual(config.roots, tuple(home / name for name in ("Documents", "Desktop", "Downloads", "Projects")))
 
     def test_load_config_parses_and_normalizes_values(self) -> None:
@@ -50,6 +51,7 @@ class ConfigTests(unittest.TestCase):
                         'roots = ["~/notes", "' + (temp_path / "workspace" / ".." / "docs").as_posix() + '"]',
                         'ignore_dirs = ["cache", "tmp"]',
                         "max_extracted_file_size = 2048",
+                        "include_hidden_dirs = true",
                     ]
                 ),
                 encoding="utf-8",
@@ -61,6 +63,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.roots, (home / "notes", temp_path / "docs"))
         self.assertEqual(config.ignore_dirs, ("cache", "tmp"))
         self.assertEqual(config.max_extracted_file_size, 2048)
+        self.assertTrue(config.include_hidden_dirs)
 
 
 class StorageTests(unittest.TestCase):

@@ -131,6 +131,22 @@ class SearchControllerPhase7Tests(unittest.TestCase):
         self.assertIn("Index refreshed: 42 files", controller.state.status_message)
         self.assertFalse(controller.state.indexing)
 
+    def test_precedence_prioritizes_transient_overlay(self) -> None:
+        controller = SearchController(fuzzy_index=FuzzyIndex([("/tmp/alpha.md", "alpha.md")]))
+        controller.update_query("alp")
+        self.assertEqual(controller.precedence(), "autocomplete")
+
+        controller.set_search_error("boom")
+        self.assertEqual(controller.precedence(), "overlay")
+
+    def test_dismiss_transient_clears_status_message(self) -> None:
+        controller = SearchController()
+        controller.set_search_error("boom")
+
+        self.assertTrue(controller.dismiss_transient())
+        self.assertEqual(controller.state.status_message, "")
+        self.assertFalse(controller.dismiss_transient())
+
 
 class ScreenTextTests(unittest.TestCase):
     def test_no_index_state_explains_how_to_start_build(self) -> None:
@@ -171,6 +187,14 @@ class ScreenTextTests(unittest.TestCase):
         self.assertIn("/projects", text)
         self.assertIn("Ctrl-R", text)
 
+    def test_sidebar_text_shows_last_refresh_when_present(self) -> None:
+        state = SearchState(last_successful_index_timestamp=1_714_000_000.0)
+
+        text = build_sidebar_text(state, roots=(Path("/projects"),), has_index=True)
+
+        self.assertIn("Last refresh", text)
+        self.assertIn("2024", text)
+
     def test_banner_text_summarizes_query_and_index_state(self) -> None:
         state = SearchState(raw_query="alpha", mode="results", results=(_result("/tmp/alpha.md", "alpha.md"),))
 
@@ -196,6 +220,25 @@ class ScreenTextTests(unittest.TestCase):
         self.assertIn("> [1/1] alpha.md", text)
         self.assertIn("name", text)
         self.assertIn("content", text)
+
+    def test_results_text_for_no_matches_includes_filter_summary(self) -> None:
+        controller = SearchController()
+        controller.update_query("ext:md path:notes")
+        state = replace(controller.state, results=(), mode="no-results")
+
+        text = build_results_text(state, roots=(Path("/projects"),), has_index=True)
+
+        self.assertIn("No matching files", text)
+        self.assertIn("Active filters", text)
+        self.assertIn("ext=md", text)
+
+    def test_result_row_text_truncates_long_paths_predictably(self) -> None:
+        long_path = "/tmp/" + ("segment/" * 30) + "alpha.md"
+        result = _result(long_path, "alpha.md", snippet="alpha")
+
+        text = build_result_row_text(result, selected=False, index=0, total=1)
+
+        self.assertIn("...", text)
 
     def test_results_text_for_first_build_state_explains_wait_for_initial_index(self) -> None:
         state = SearchState(indexing=True, has_index=False)
