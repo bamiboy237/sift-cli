@@ -9,6 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
+# OS / editor junk
+.DS_Store
 
-.gitignore
+# Secrets
 .env
+
+# Local tooling artifacts
+graphify-out/
