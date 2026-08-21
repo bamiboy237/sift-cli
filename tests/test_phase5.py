@@ -150,6 +150,26 @@ class AppLaunchTests(unittest.TestCase):
         self.assertTrue(launch_config.auto_start_indexing)
         self.assertEqual(controller.db_path, runtime_paths.active_db_path)
 
+    def test_launch_app_instantiates_and_runs_app(self) -> None:
+        from unittest.mock import MagicMock
+        from sift_cli.app import launch_app
+        from sift_cli.ui import LaunchConfig
+
+        config = LaunchConfig(
+            db_path=Path("/tmp/index.db"),
+            active_db_path=Path("/tmp/index.db"),
+            staging_db_path=Path("/tmp/index.build.db"),
+            roots=(),
+        )
+        mock_instance = MagicMock()
+        mock_cls = MagicMock(return_value=mock_instance)
+
+        with patch("sift_cli.app.build_sift_app", return_value=mock_cls):
+            launch_app(config)
+
+        mock_cls.assert_called_once()
+        mock_instance.run.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

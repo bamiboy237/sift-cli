@@ -36,7 +36,8 @@ def launch_app(
     config: LaunchConfig, controller: SearchController | None = None
 ) -> None:
     controller = controller or SearchController(db_path=config.db_path)
-    app = build_sift_app(config, controller)
+    app_cls = build_sift_app(config, controller)
+    app = app_cls()
     app.run()
 
 
