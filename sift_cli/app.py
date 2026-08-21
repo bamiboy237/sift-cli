@@ -449,6 +449,7 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
             if (
                 controller.precedence() == "autocomplete"
                 and controller.state.autocomplete
+                and not controller.state.autocomplete_hidden
             ):
                 search_input = self.query_one("#search", Input)
                 value, cursor = controller.accept_autocomplete_with_cursor(
@@ -457,7 +458,7 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
                 self.query_one("#search", Input).value = value
                 self.query_one("#search", Input).cursor_position = cursor
                 self._schedule_search(value, immediate=True)
-            elif controller.state.focus_mode == "results":
+            elif controller.state.results:
                 controller.open_selected_result()
             else:
                 self._schedule_search(
@@ -647,6 +648,17 @@ def build_sift_app(config: LaunchConfig, controller: SearchController):
                 self._schedule_search(event.value, immediate=False)
                 self._request_render()
 
+        def on_list_view_selected(self, event: ListView.Selected) -> None:
+            controller.open_selected_result()
+            self._request_render()
+
+        def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+            if event.item and event.list_view.index is not None:
+                if controller.state.results and 0 <= event.list_view.index < len(controller.state.results):
+                    if controller.state.selected_index != event.list_view.index:
+                        controller.move_result_selection(event.list_view.index - controller.state.selected_index)
+                        self._request_render()
+
         def _schedule_search(self, query: str, *, immediate: bool) -> None:
             cursor = self.query_one("#search", Input).cursor_position
             controller.update_query(query, cursor=cursor)
@@ -819,6 +831,12 @@ def _styled_text(text: str) -> Text:
             rendered.append(line.strip(), style="#6e7991")
         elif line.startswith("─"):
             rendered.append(line, style="#262d42")
+        elif "│" in line and len(line) >= 4 and line[:4].strip().isdigit():
+            parts = line.split("│", 1)
+            rendered.append(parts[0] + "│", style="#4e566d")
+            _append_delimited(rendered, parts[1], default_style="#d8dee9")
+        elif line.startswith("[Binary File") or line.startswith("[Cached Index"):
+            rendered.append(line, style="bold #7aa2f7")
         else:
             _append_delimited(rendered, line)
 

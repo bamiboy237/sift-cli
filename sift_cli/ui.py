@@ -57,6 +57,24 @@ class LaunchConfig:
     auto_start_indexing: bool = False
 
 
+def read_file_preview_lines(path_str: str, max_lines: int = 80, max_bytes: int = 65536) -> tuple[list[str], bool, bool]:
+    file_path = Path(path_str)
+    if not file_path.exists() or not file_path.is_file():
+        return [], False, True
+    try:
+        with open(file_path, "rb") as f:
+            chunk = f.read(4096)
+            if b"\x00" in chunk:
+                return [], True, False
+            f.seek(0)
+            data = f.read(max_bytes)
+            text = data.decode("utf-8", errors="replace")
+            lines = text.splitlines()[:max_lines]
+            return lines, False, False
+    except Exception:
+        return [], False, True
+
+
 def build_preview_text(*, snippet: str | None, path: str) -> str:
     if snippet:
         if len(snippet) > 240:
@@ -66,11 +84,33 @@ def build_preview_text(*, snippet: str | None, path: str) -> str:
 
 
 def render_result_preview(result: SearchResult) -> str:
-    preview = build_preview_text(snippet=result.snippet, path=result.path)
+    lines, is_binary, is_missing = read_file_preview_lines(result.path)
+    size_label = f"{result.size} bytes" if result.size is not None else ""
+    ext_badge = f"[{result.ext.upper()}]" if result.ext else "[FILE]"
+    header = f"{result.filename}  {ext_badge}  {size_label}"
+    divider = "─" * 52
+
+    if is_missing:
+        if result.snippet:
+            preview = build_preview_text(snippet=result.snippet, path=result.path)
+            return f"{header}\n{result.path}\n{divider}\n\n{preview}"
+        preview = build_preview_text(snippet=None, path=result.path)
+        return f"{result.filename}\n{result.path}\n{size_label}\n{preview}"
+
+    if is_binary:
+        return f"{header}\n{result.path}\n{divider}\n\n[Binary File — {size_label}]\nPress Enter to open with default application."
+
+    if lines:
+        body_lines = [f"{line_num:3d} │ {line}" for line_num, line in enumerate(lines, 1)]
+        content_preview = "\n".join(body_lines)
+        return f"{header}\n{result.path}\n{divider}\n\n{content_preview}"
+
     if result.snippet:
-        return preview
-    size = f"{result.size} bytes"
-    return f"{result.filename}\n{result.path}\n{size}\n{preview}"
+        preview = build_preview_text(snippet=result.snippet, path=result.path)
+        return f"{header}\n{result.path}\n{divider}\n\n{preview}"
+
+    preview = build_preview_text(snippet=None, path=result.path)
+    return f"{result.filename}\n{result.path}\n{size_label}\n{preview}"
 
 
 def build_query_banner_text(state: SearchState, *, has_index: bool = False) -> str:

@@ -56,6 +56,31 @@ class PreviewTests(unittest.TestCase):
         self.assertIn("/tmp/alpha.md", preview)
         self.assertIn("12 bytes", preview)
 
+    def test_render_result_preview_reads_file_from_disk_with_line_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "notes.txt"
+            file_path.write_text("First line\nSecond line\nThird line", encoding="utf-8")
+
+            result = SearchResult(
+                path=str(file_path),
+                filename="notes.txt",
+                ext="txt",
+                size=32,
+                modified_at=1_714_000_000.0,
+                snippet=None,
+                matched_filename=True,
+                matched_content=False,
+                score=1.0,
+            )
+
+            preview = render_result_preview(result)
+
+            self.assertIn("notes.txt", preview)
+            self.assertIn("[TXT]", preview)
+            self.assertIn("  1 │ First line", preview)
+            self.assertIn("  2 │ Second line", preview)
+            self.assertIn("  3 │ Third line", preview)
+
 
 class ControllerActionTests(unittest.TestCase):
     def test_open_selected_result_updates_status_without_clearing_state(self) -> None:

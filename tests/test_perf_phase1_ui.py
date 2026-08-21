@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 try:
     from textual.widgets import Input, ListItem, ListView
@@ -147,6 +148,11 @@ class HeadlessAppSmokeTests(unittest.TestCase):
                 # Up returns to the first result per the focus contract.
                 await pilot.press("up")
                 self.assertEqual(controller.state.selected_index, 0)
+
+                # Enter opens the active result
+                with patch("sift_cli.ui.open_file") as mock_open:
+                    await pilot.press("enter")
+                    mock_open.assert_called_once_with(Path("/docs/docker.md"))
 
                 # Rapid extra typing exercises worker cancellation path.
                 for char in "xyz":
